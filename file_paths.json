@@ -1,0 +1,33 @@
+{
+    "llm_user_nickname": "Timmy",
+    "llm_user_bio": "A young guy who is trying to learn how to code.",
+    "llm_assistant_nickname": "Monica",
+    "llm_assistant_bio": "",
+    "llm_assistant_additional_characteristics": "you are a fashion girl",
+    "llm_conversation_context": "you are in a shopping mall",
+    "tts_voice_id_cartesia": "f2f6d6783ff64172a0f2af8ce12a0501",
+    "io_source_portrait_path": "f1.jpg",
+    "io_source_portrait_folder": "public/test",
+    "io_audio_path": "i1.wav",
+    "io_a2m_config_path": "output/mouthrange_full.json",
+    "io_a2m_weight_path": "output/mouthrange_full_ep_175.pth",
+    "gaze_ref_img_path": "s1.jpg",
+    "faster_config_path": "FasterLivePortrait/configs/trt_infer_custom.yaml",
+    "text_motion_pair": [
+        {
+            "path": "motion_lib/anger.pt",
+            "text": "anger",
+            "duration": 75
+        },
+        {
+            "path": "motion_lib/sad.pt",
+            "text": "sad",
+            "duration": 75
+        },
+        {
+            "path": "motion_lib/smile.pt",
+            "text": "smile",
+            "duration": 75
+        }
+    ]
+}
