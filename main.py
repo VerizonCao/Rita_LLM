@@ -10,6 +10,7 @@ from typing import Union
 from dotenv import load_dotenv
 from livekit import rtc, api
 import argparse
+import json
 
 from alive_inference_status import ALRealtimeIOAndStatus
 from alive_inference_config import AliveInferenceConfig
@@ -44,12 +45,38 @@ async def main_room(room: rtc.Room, room_name: str):
         def __init__(self):
             self.user_left = False
             self.audio_capture_wrapper = None
+            self.last_sent_voice_transcription = None  # Track last sent voice transcription
+            self.agent_message_count = 0  # Track number of agent messages processed
 
     state = RoomState()
 
     @room.on("participant_connected")
     def on_participant_connected(participant: rtc.RemoteParticipant) -> None:
         logging.info(f"participant connected: {participant.sid} {participant.identity}")
+
+    @room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        async def process_data():
+            try:
+                raw_json = data.data.decode("utf-8")
+                json_data = json.loads(raw_json)
+
+                message = json_data.get("message")
+                if message:
+                    # Check if this is a duplicate of our last sent voice transcription
+                    if message == state.last_sent_voice_transcription:
+                        print("Received duplicate voice transcription, ignoring")
+                        state.last_sent_voice_transcription = None  # Reset after processing
+                        return
+                    # also remove it. 
+                    state.last_sent_voice_transcription = None  # Reset after processing
+                    print("ready to send text input to the agent: ", message)
+                    if state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
+                        state.audio_capture_wrapper.audio_capture.on_text_received(message)
+            except Exception as e:
+                print(f"Error processing data: {e}")
+
+        asyncio.create_task(process_data())
 
     @room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
@@ -171,6 +198,7 @@ async def main_room(room: rtc.Room, room_name: str):
     loop_count = 0
     user_left_loop_count = 0
     user_left_confirm_number = 5  # roughly 15s
+    hasPublished = False
 
     while True:
         try:
@@ -189,6 +217,36 @@ async def main_room(room: rtc.Room, room_name: str):
                         state.user_left = True
                 else:
                     user_left_loop_count = 0
+
+            # agent text
+            if (
+                hasPublished
+                and state.audio_capture_wrapper
+                and len(state.audio_capture_wrapper.agent_messages) > state.agent_message_count
+            ):
+                start_time = time.time()
+                message = state.audio_capture_wrapper.agent_messages[state.agent_message_count]
+                if message["role"] == "assistant":
+                    try:
+                        if not room.remote_participants:
+                            print("No remote participants available to send message to")
+                            continue
+                        # Parse the JSON content string
+                        content = json.loads(message["content"])
+                        if content.get("Dialogue"):
+                            print("send agent message: ", content["Dialogue"])
+                            await room.local_participant.send_text(
+                                text=content["Dialogue"],
+                                topic="lk.chat",
+                            )
+                    except Exception as e:
+                        print(f"Error sending message: {e}")
+                        continue
+
+                state.agent_message_count += 1
+                end_time = time.time()
+                processing_time = (end_time - start_time) * 1000  # Convert to milliseconds
+                print(f"Agent message processing time: {processing_time:.2f}ms")
 
             await asyncio.sleep(0.1)  # Small delay to prevent CPU overuse
 
