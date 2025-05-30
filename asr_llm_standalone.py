@@ -8,6 +8,9 @@ import time
 import requests
 import json
 from system_prompt import LLM_System_Prompt
+from livekit import rtc  # Add LiveKit import
+from livekit.rtc import TextStreamWriter  # Add TextStreamWriter import
+import asyncio
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -28,6 +31,7 @@ class ASR_LLM_Manager:
     def __init__(
         self,
         llm_data: tuple = None,
+        room: rtc.Room = None,  # Add type hint for LiveKit room
     ):
         # Initialize Deepinfra client for Whisper ASR
         self.openai_client = OpenAI(
@@ -36,6 +40,11 @@ class ASR_LLM_Manager:
         )
         if not self.openai_client.api_key:
             raise ValueError("DEEPINFRA_API_KEY environment variable is not set")
+
+        # Store room reference
+        self.room = room
+        self.text_stream_writer: TextStreamWriter | None = None  # Add type hint for text stream writer
+        self._is_shutting_down = False  # Add shutdown flag
 
         # OpenRouter configuration
         self.openrouter_url = "https://openrouter.ai/api/v1/chat/completions"
@@ -102,11 +111,104 @@ class ASR_LLM_Manager:
 
         return transcription.text
 
-    def send_to_openrouter(self, text):
+    async def cleanup(self):
+        """Gracefully cleanup resources before shutdown"""
+        self._is_shutting_down = True
+        try:
+            # Close text stream if it exists
+            if self.text_stream_writer:
+                try:
+                    await self.text_stream_writer.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing text stream: {e}")
+                finally:
+                    self.text_stream_writer = None
+
+            # Disconnect from room if it exists
+            if self.room:
+                try:
+                    await self.room.disconnect()
+                except Exception as e:
+                    logger.warning(f"Error disconnecting from room: {e}")
+                finally:
+                    self.room = None
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+        finally:
+            self._is_shutting_down = False
+
+    @staticmethod
+    async def shutdown_event_loop():
+        """Safely shutdown the event loop"""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Cancel all running tasks
+                for task in asyncio.all_tasks(loop):
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            logger.warning(f"Error cancelling task: {e}")
+                
+                # Stop the loop
+                loop.stop()
+        except Exception as e:
+            logger.error(f"Error during event loop shutdown: {e}")
+
+    async def publish_text_livekit(self, text):
+        """
+        Publish text to LiveKit room using the streaming format
+        """
+        if self._is_shutting_down:
+            logger.warning("Skipping text publish during shutdown")
+            return
+
+        if not self.room:
+            logger.error("No LiveKit room available for publishing")
+            return
+
+        try:
+            if text == "[START]":
+                # Start a new text stream
+                self.text_stream_writer = await self.room.local_participant.stream_text(
+                    topic="llm_data"
+                )
+                logger.info("Started new text stream")
+            
+            elif text == "[DONE]" or text == "[INTERRUPTED]":
+                if self.text_stream_writer:
+                    await self.text_stream_writer.aclose()
+                    logger.info("Closed text stream")
+                    self.text_stream_writer = None
+            
+            else:
+                # Regular text chunk
+                if self.text_stream_writer:
+                    print(f"Writing text: {text}")
+                    await self.text_stream_writer.write(text)
+                else:
+                    logger.error("Attempted to write text chunk but no active stream")
+                    
+        except Exception as e:
+            logger.error(f"Error publishing text to LiveKit: {e}")
+            # Try to clean up the stream if there was an error
+            if self.text_stream_writer:
+                try:
+                    await self.text_stream_writer.aclose()
+                except:
+                    pass
+                self.text_stream_writer = None
+
+    async def send_to_openrouter(self, text):
         """
         1. receives text from ASR or user input.
         2. send text to LLM and get streaming response.
-        3. print the response and publish to WebRTC.
+        3. print the response and publish to LiveKit.
         """
         self.user_interrupting_flag = False
         first_llm_token_received = False
@@ -120,6 +222,10 @@ class ASR_LLM_Manager:
             "stream": True,
             "provider": {"sort": "latency"},
         }
+
+        # Send stream start
+        await self.publish_text_livekit("[START]")
+
         with requests.post(
             self.openrouter_url,
             headers=self.openrouter_headers,
@@ -155,13 +261,15 @@ class ASR_LLM_Manager:
                                 )
                                 for segment in remaining_segments:
                                     print(segment, end="", flush=True)
-                                    self.publish_text_webrtc(segment)
+                                    await self.publish_text_livekit(segment)
 
                                 self.messages.append(
                                     {"role": "assistant", "content": current_response}
                                 )
                                 logger.info(f"Current response: {current_response}")
                                 print()  # New line after response
+                                # Send stream end
+                                await self.publish_text_livekit("[DONE]")
                                 break
 
                             try:
@@ -175,7 +283,7 @@ class ASR_LLM_Manager:
                                     )
                                     for segment in segments:
                                         print(segment, end="", flush=True)
-                                        self.publish_text_webrtc(segment)
+                                        await self.publish_text_livekit(segment)
 
                             except json.JSONDecodeError:
                                 logger.warning(f"Could not decode JSON data: {data}")
@@ -191,11 +299,7 @@ class ASR_LLM_Manager:
                         logger.warning("Stopping LLM stream due to user interruption.")
                         self.user_interrupting_flag = False
                         print("\n[INTERRUPTED]")
-                        self.publish_text_webrtc("[INTERRUPTED]")
+                        await self.publish_text_livekit("[INTERRUPTED]")
                         break
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
-
-    def publish_text_webrtc(self, text):
-        # publish to webrtc
-        pass

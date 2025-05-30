@@ -6,6 +6,7 @@ import array
 import time
 import tempfile
 from pathlib import Path
+import asyncio
 
 from alive_inference_status import ALRealtimeIOAndStatus
 from audio_capture_livekit import (
@@ -34,6 +35,8 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         config: AliveInferenceConfig,
         audio_play_locally=False,
         audio_track=None,
+        room=None,
+        loop=None,
     ):
         self.is_speaking = False
         self.current_audio = []
@@ -41,12 +44,15 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.status = status
         self.asr_llm_manager = ASR_LLM_Manager(
             llm_data=config.get_llm_tuple(),
+            room=room,
         )
         self.processing_thread = None
         self.stop_processing = threading.Event()
         self.speech_end_time = 0
         self.last_speech_detected_time = 0
         self.audio_track = audio_track
+        self.room = room
+        self.loop = loop
 
         self.text_input = None
         self.text_input_voice = []
@@ -101,7 +107,13 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         try:
             if not self.text_input:
                 return
-            llm_response = self.asr_llm_manager.send_to_openrouter(self.text_input)
+            if self.loop:
+                asyncio.run_coroutine_threadsafe(
+                    self.asr_llm_manager.send_to_openrouter(self.text_input),
+                    self.loop
+                )
+            else:
+                logger.error("No event loop available for async operation")
             self.text_input = None
         except Exception as e:
             logger.error(f"Error processing user text input: {e}")
@@ -136,7 +148,13 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                         logger.info("Processing interrupted before LLM")
                         return
 
-                    llm_response = self.asr_llm_manager.send_to_openrouter(transcription_text)
+                    if self.loop:
+                        asyncio.run_coroutine_threadsafe(
+                            self.asr_llm_manager.send_to_openrouter(transcription_text),
+                            self.loop
+                        )
+                    else:
+                        logger.error("No event loop available for async operation")
 
                 except Exception as e:
                     logger.error(f"Error during async processing: {e}")
@@ -172,6 +190,8 @@ def run_audio_capture_test(
     use_silero_vad=True,
     audio_play_locally=False,
     audio_capture_wrapper: AudioCaptureWrapper = None,
+    room = None,
+    loop = None,
 ):
     audio_capture = None
 
@@ -180,7 +200,9 @@ def run_audio_capture_test(
             status=status, 
             config=config, 
             audio_play_locally=audio_play_locally,
-            audio_track=audio_capture_wrapper.audio_track if audio_capture_wrapper else None
+            audio_track=audio_capture_wrapper.audio_track if audio_capture_wrapper else None,
+            room=room,
+            loop=loop,
         )
 
         if use_silero_vad:
@@ -251,10 +273,12 @@ def run_audio2audio_in_thread(
     config: AliveInferenceConfig,
     audio_play_locally=False,
     audio_capture_wrapper: AudioCaptureWrapper = None,
+    room = None,
+    loop = None,
 ):
     thread = threading.Thread(
         target=run_audio_capture_test,
-        args=(status, config, True, audio_play_locally, audio_capture_wrapper),
+        args=(status, config, True, audio_play_locally, audio_capture_wrapper, room, loop),
         daemon=True,
     )
     thread.start()

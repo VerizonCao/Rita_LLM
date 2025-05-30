@@ -47,8 +47,10 @@ async def main_room(room: rtc.Room, room_name: str):
             self.audio_capture_wrapper = None
             self.last_sent_voice_transcription = None  # Track last sent voice transcription
             self.agent_message_count = 0  # Track number of agent messages processed
+            self.text_stream_writer = None  # Store the text stream writer
 
     state = RoomState()
+    loop = asyncio.get_event_loop()  # Get the current event loop
 
     @room.on("participant_connected")
     def on_participant_connected(participant: rtc.RemoteParticipant) -> None:
@@ -99,7 +101,9 @@ async def main_room(room: rtc.Room, room_name: str):
                     status=status,
                     config=config,
                     audio_play_locally=False,
-                    audio_capture_wrapper=state.audio_capture_wrapper
+                    audio_capture_wrapper=state.audio_capture_wrapper,
+                    room=room,  # Pass the room to the wrapper
+                    loop=loop,  # Pass the event loop to the wrapper
                 )
                 # Wait for audio capture to be ready
                 while not state.audio_capture_wrapper.audio_capture:
@@ -197,7 +201,7 @@ async def main_room(room: rtc.Room, room_name: str):
     # Main loop to keep the connection alive
     loop_count = 0
     user_left_loop_count = 0
-    user_left_confirm_number = 5  # roughly 15s
+    user_left_confirm_number = 2  # roughly 5s
     hasPublished = False
 
     while True:
@@ -209,7 +213,7 @@ async def main_room(room: rtc.Room, room_name: str):
             loop_count += 1
 
             # check if user left every 300 loops
-            if loop_count % 300 == 0:
+            if loop_count % 30 == 0:
                 if not room.remote_participants or room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
                     user_left_loop_count += 1
                     print(f"user not in room or room disconnected count + 1, total {user_left_loop_count}")
@@ -218,7 +222,7 @@ async def main_room(room: rtc.Room, room_name: str):
                 else:
                     user_left_loop_count = 0
 
-            # agent text
+            # Handle complete assistant messages (for backward compatibility)
             if (
                 hasPublished
                 and state.audio_capture_wrapper
@@ -226,15 +230,18 @@ async def main_room(room: rtc.Room, room_name: str):
             ):
                 start_time = time.time()
                 message = state.audio_capture_wrapper.agent_messages[state.agent_message_count]
-                if message["role"] == "assistant":
+                
+                if message.get("role") == "assistant":
                     try:
                         if not room.remote_participants:
                             print("No remote participants available to send message to")
                             continue
+                            
                         # Parse the JSON content string
                         content = json.loads(message["content"])
                         if content.get("Dialogue"):
-                            print("send agent message: ", content["Dialogue"])
+                            print("send complete agent message: ", content["Dialogue"])
+                            # Send to chat for backward compatibility
                             await room.local_participant.send_text(
                                 text=content["Dialogue"],
                                 topic="lk.chat",
@@ -246,13 +253,15 @@ async def main_room(room: rtc.Room, room_name: str):
                 state.agent_message_count += 1
                 end_time = time.time()
                 processing_time = (end_time - start_time) * 1000  # Convert to milliseconds
-                print(f"Agent message processing time: {processing_time:.2f}ms")
+                print(f"Message processing time: {processing_time:.2f}ms")
 
             await asyncio.sleep(0.1)  # Small delay to prevent CPU overuse
 
         except Exception as e:
             print(f"Error in main loop: {e}")
             break
+
+    return state  # Return the state object
 
 def run_async_room_connection(room_name: str):
     """Wrapper function to run async function in a thread"""
@@ -261,25 +270,37 @@ def run_async_room_connection(room_name: str):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     room: rtc.Room = rtc.Room(loop)
+    state = None  # Initialize state variable
 
     async def cleanup():
         print("Starting cleanup...")
         try:
-            await room.disconnect()
-            print("Room disconnected")
-            loop.stop()
-            print("Cleanup completed successfully")
+            # Stop audio capture if it exists
+            if state and state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
+                try:
+                    state.audio_capture_wrapper.audio_capture.stop()
+                except Exception as e:
+                    print(f"Error stopping audio capture: {e}")
+
+            # Disconnect from room
+            try:
+                if room and room.connection_state != rtc.ConnectionState.CONN_DISCONNECTED:
+                    await room.disconnect()
+            except Exception as e:
+                print(f"Error disconnecting from room: {e}")
+
+            print("Cleanup completed")
         except Exception as e:
             print(f"Error during cleanup: {e}")
-            raise
 
     async def run_with_cleanup():
+        nonlocal state
         try:
-            await main_room(room, room_name)
+            state = await main_room(room, room_name)
         finally:
-            print("Starting final cleanup...")
             await cleanup()
-            print("Final cleanup completed")
+            # Stop the event loop when we're done
+            loop.stop()
 
     # Create and run the main task
     main_task = loop.create_task(run_with_cleanup())
@@ -287,11 +308,17 @@ def run_async_room_connection(room_name: str):
     try:
         loop.run_forever()
     except KeyboardInterrupt:
-        pass
+        print("\nReceived keyboard interrupt")
     finally:
         print("agent is leaving the room")
-        loop.run_until_complete(cleanup())
-        loop.close()
+        try:
+            if not loop.is_closed():
+                loop.run_until_complete(cleanup())
+        except Exception as e:
+            print(f"Error during final cleanup: {e}")
+        finally:
+            if not loop.is_closed():
+                loop.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start the room connection with a specified room name')
