@@ -31,6 +31,7 @@ class TTSWrapper:
         self.last_message_id = None  # Track last message ID to avoid duplicates
         self.current_stream_buffer = ""  # Buffer for text chunks
         self.is_streaming = False  # Track streaming state
+        self.pending_text = []  # Buffer for text that arrives before [START]
 
     def handle_text_stream(self, text: str):
         """
@@ -43,16 +44,34 @@ class TTSWrapper:
             return
 
         try:
+            # Log full text without truncation
+            logger.info(f"Received text: {text}")
+            
             if text == "[START]":
+                logger.info("=== RECEIVED [START] MARKER ===")
                 self.is_streaming = True
                 self.current_stream_buffer = ""
                 self.tts_manager._handle_incoming_text("[START]")
-                logger.info("Started new text stream")
+                logger.info("=== TTS STREAM STARTED ===")
+                
+                # Process any pending text that arrived before [START]
+                if self.pending_text:
+                    logger.info(f"=== PROCESSING {len(self.pending_text)} BUFFERED CHUNKS ===")
+                    for i, pending in enumerate(self.pending_text, 1):
+                        logger.info(f"Processing buffered chunk {i}/{len(self.pending_text)}: {pending}")
+                        self.tts_manager._handle_incoming_text(pending)
+                    self.pending_text = []
+                    logger.info("=== ALL BUFFERED CHUNKS PROCESSED ===")
+                else:
+                    logger.info("=== NO BUFFERED CHUNKS TO PROCESS ===")
             
             elif text == "[DONE]" or text == "[INTERRUPTED]":
                 self.is_streaming = False
                 self.tts_manager._handle_incoming_text(text)
-                logger.info(f"Ended text stream with: {text}")
+                logger.info(f"=== TTS STREAM ENDED WITH: {text} ===")
+                if self.pending_text:
+                    logger.warning(f"=== CLEARING {len(self.pending_text)} UNPROCESSED BUFFERED CHUNKS ===")
+                self.pending_text = []  # Clear any pending text
             
             elif text.startswith("[speech_end_time]:") or text.startswith("[llm_first_token_time]:"):
                 # Handle timing information
@@ -61,21 +80,13 @@ class TTSWrapper:
             elif self.is_streaming:
                 # Process streaming text chunk
                 self.tts_manager._handle_incoming_text(text)
-                logger.debug(f"Processed text chunk: {text[:50]}...")
+                logger.debug(f"Processed text chunk: {text}")
             
             else:
-                # Handle non-streaming messages (backward compatibility)
-                if text == self.last_message_id:
-                    logger.info("Received duplicate text, ignoring")
-                    return
-                
-                self.last_message_id = text
-                logger.info(f"Processing non-streaming text: {text[:50]}...")
-                
-                # Send as a complete message with start/end markers
-                self.tts_manager._handle_incoming_text("[START]")
-                self.tts_manager._handle_incoming_text(text)
-                self.tts_manager._handle_incoming_text("[DONE]")
+                # Buffer text that arrives before [START]
+                logger.info(f"Buffering text before stream start: {text}")
+                self.pending_text.append(text)
+                logger.info(f"Current buffer size: {len(self.pending_text)} chunks")
 
         except Exception as e:
             logger.error(f"Error handling text stream: {e}")

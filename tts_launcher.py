@@ -65,15 +65,13 @@ async def main_room(room: rtc.Room, room_name: str):
                 f'  Timestamp: {info.timestamp}'
             )
 
-            # Read all text at once
-            full_text = await reader.read_all()
-            
             if not state.tts_wrapper or not state.tts_wrapper.tts_manager:
                 logger.warning("TTS wrapper or manager not initialized")
                 return
 
-            # Pass the text directly to the TTS wrapper
-            state.tts_wrapper.handle_text_stream(full_text)
+            # Process text chunks as they arrive using reader directly as an async iterator
+            async for chunk in reader:
+                state.tts_wrapper.handle_text_stream(chunk)
 
         except Exception as e:
             logger.error(f"Error processing text stream: {e}", exc_info=True)

@@ -289,7 +289,7 @@ class TTS_Manager:
 
             except Exception as e_tts:
                 logger.error(
-                    f"TTS worker: Error during Cartesia send/recv for chunk '{text_chunk[:50]}...': {e_tts}",
+                    f"TTS worker: Error during Cartesia send/recv for chunk '{text_chunk}...': {e_tts}",
                     exc_info=True,
                 )
                 continue

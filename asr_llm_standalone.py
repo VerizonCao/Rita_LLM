@@ -174,16 +174,20 @@ class ASR_LLM_Manager:
 
         try:
             if text == "[START]":
+                logger.info("=== SENDING [START] MARKER ===")
                 # Start a new text stream
                 self.text_stream_writer = await self.room.local_participant.stream_text(
                     topic="llm_data"
                 )
-                logger.info("Started new text stream")
+                # Send the [START] marker first
+                await self.text_stream_writer.write("[START]")
+                logger.info("=== [START] MARKER SENT AND STREAM INITIALIZED ===")
             
             elif text == "[DONE]" or text == "[INTERRUPTED]":
                 if self.text_stream_writer:
+                    await self.text_stream_writer.write(text)  # Send the marker before closing
                     await self.text_stream_writer.aclose()
-                    logger.info("Closed text stream")
+                    logger.info(f"Closed text stream with marker: {text}")
                     self.text_stream_writer = None
             
             else:
@@ -223,7 +227,7 @@ class ASR_LLM_Manager:
             "provider": {"sort": "latency"},
         }
 
-        # Send stream start
+        # Send stream start at the beginning
         await self.publish_text_livekit("[START]")
 
         with requests.post(
@@ -241,6 +245,9 @@ class ASR_LLM_Manager:
                         logger.info(
                             f"Time from whisper end to LLM first token: {self.timing['llm_first_token_time'] - self.timing['whisper_end_time']:.2f} seconds"
                         )
+                    # Send timing information after first token
+                    await self.publish_text_livekit(f"[speech_end_time]: {self.timing['speech_end_time']}")
+                    await self.publish_text_livekit(f"[llm_first_token_time]: {self.timing['llm_first_token_time']}")
 
                 buffer += chunk
                 while True:

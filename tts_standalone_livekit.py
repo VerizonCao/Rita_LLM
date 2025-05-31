@@ -177,7 +177,7 @@ class TTS_Manager:
                     logger.error("TTS thread not running")
                     return
                     
-                logger.debug(f"Queueing text chunk: {text[:50]}...")
+                logger.debug(f"Queueing text chunk: {text}...")
                 self.tts_queue.put(text)
 
     def _tts_worker(self):
