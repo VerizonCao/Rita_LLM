@@ -193,7 +193,6 @@ class ASR_LLM_Manager:
             else:
                 # Regular text chunk
                 if self.text_stream_writer:
-                    print(f"Writing text: {text}")
                     await self.text_stream_writer.write(text)
                 else:
                     logger.error("Attempted to write text chunk but no active stream")
@@ -246,8 +245,8 @@ class ASR_LLM_Manager:
                             f"Time from whisper end to LLM first token: {self.timing['llm_first_token_time'] - self.timing['whisper_end_time']:.2f} seconds"
                         )
                     # Send timing information after first token
-                    await self.publish_text_livekit(f"[speech_end_time]: {self.timing['speech_end_time']}")
-                    await self.publish_text_livekit(f"[llm_first_token_time]: {self.timing['llm_first_token_time']}")
+                    # await self.publish_text_livekit(f"[speech_end_time]: {self.timing['speech_end_time']}")
+                    # await self.publish_text_livekit(f"[llm_first_token_time]: {self.timing['llm_first_token_time']}")
 
                 buffer += chunk
                 while True:
@@ -267,14 +266,13 @@ class ASR_LLM_Manager:
                                     self.text_chunk_spliter.get_remaining_buffer()
                                 )
                                 for segment in remaining_segments:
-                                    print(segment, end="", flush=True)
+                                    print("sending segment in final: ", segment, '\n', flush=True)
                                     await self.publish_text_livekit(segment)
 
                                 self.messages.append(
                                     {"role": "assistant", "content": current_response}
                                 )
                                 logger.info(f"Current response: {current_response}")
-                                print()  # New line after response
                                 # Send stream end
                                 await self.publish_text_livekit("[DONE]")
                                 break
@@ -289,7 +287,7 @@ class ASR_LLM_Manager:
                                         content
                                     )
                                     for segment in segments:
-                                        print(segment, end="", flush=True)
+                                        print("sending segment: ", segment, '\n', flush=True)
                                         await self.publish_text_livekit(segment)
 
                             except json.JSONDecodeError:

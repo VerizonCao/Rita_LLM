@@ -91,6 +91,11 @@ async def main_room(room: rtc.Room, room_name: str):
         participant: rtc.RemoteParticipant,
     ):
         logging.info(f"track subscribed: {publication.sid}")
+        # Check if participant is not an agent-avatar
+        if participant.attributes and participant.attributes.get("role") == "agent-avatar":
+            logging.info("Ignoring audio track from agent-avatar")
+            return
+            
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             print("Subscribed to an Audio Track!")
             # Initialize audio capture if not already done
@@ -180,12 +185,14 @@ async def main_room(room: rtc.Room, room_name: str):
         api.AccessToken()
         .with_identity(f"Avatar-{uuid.uuid4()}")
         .with_name("Avatar")
+        .with_attributes({"role": "agent-asr"})
         .with_grants(
             api.VideoGrants(
                 room_join=True,
                 room=room_name,
                 can_publish=True,
                 can_subscribe=True,
+                hidden=True,
             )
         )
         .to_jwt()
