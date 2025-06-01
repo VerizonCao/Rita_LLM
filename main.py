@@ -48,6 +48,7 @@ async def main_room(room: rtc.Room, room_name: str):
             self.last_sent_voice_transcription = None  # Track last sent voice transcription
             self.agent_message_count = 0  # Track number of agent messages processed
             self.text_stream_writer = None  # Store the text stream writer
+            self.voice_transcription_count = 0  # Track number of voice transcriptions processed
 
     state = RoomState()
     loop = asyncio.get_event_loop()  # Get the current event loop
@@ -209,7 +210,6 @@ async def main_room(room: rtc.Room, room_name: str):
     loop_count = 0
     user_left_loop_count = 0
     user_left_confirm_number = 2  # roughly 5s
-    hasPublished = False
 
     while True:
         try:
@@ -239,11 +239,11 @@ async def main_room(room: rtc.Room, room_name: str):
 
             # Handle complete assistant messages (for backward compatibility)
             if (
-                hasPublished
-                and state.audio_capture_wrapper
+                state.audio_capture_wrapper
                 and len(state.audio_capture_wrapper.agent_messages) > state.agent_message_count
             ):
                 start_time = time.time()
+                print(f"Debug: Found {len(state.audio_capture_wrapper.agent_messages)} messages, current count: {state.agent_message_count}")
                 message = state.audio_capture_wrapper.agent_messages[state.agent_message_count]
                 
                 if message.get("role") == "assistant":
@@ -267,6 +267,41 @@ async def main_room(room: rtc.Room, room_name: str):
                 end_time = time.time()
                 processing_time = (end_time - start_time) * 1000  # Convert to milliseconds
                 print(f"Message processing time: {processing_time:.2f}ms")
+
+            # Check for voice transcriptions
+            if (
+                state.audio_capture_wrapper 
+                and state.audio_capture_wrapper.audio_capture 
+                and state.audio_capture_wrapper.audio_capture.event_handler
+                and len(state.audio_capture_wrapper.audio_capture.event_handler.text_input_voice) > state.voice_transcription_count
+                and room.remote_participants
+            ):
+                try:
+                    # Get the next transcription to send
+                    transcription = state.audio_capture_wrapper.audio_capture.event_handler.text_input_voice[state.voice_transcription_count]
+                    print("Sending transcription: ", transcription)
+                    
+                    # Store the transcription before sending
+                    state.last_sent_voice_transcription = transcription
+
+                    # let's use livkit data channel to send.
+                    response_data = {}
+                    response_data["text"] = transcription
+                    response_data["index"] = state.voice_transcription_count
+                    await room.local_participant.publish_data(
+                        json.dumps(
+                            {
+                                "type": "voice_transcription",
+                                "resp": response_data,
+                            }
+                        )
+                    )
+
+                    state.voice_transcription_count += 1
+                    
+                except Exception as e:
+                    print(f"Error sending transcription: {e}")
+                    continue
 
             await asyncio.sleep(0.1)  # Small delay to prevent CPU overuse
 

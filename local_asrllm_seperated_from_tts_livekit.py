@@ -242,6 +242,7 @@ def run_audio_capture_test(
         if audio_capture_wrapper:
             audio_capture_wrapper.audio_capture = audio_capture
             audio_capture_wrapper.agent_messages = event_handler.asr_llm_manager.messages
+            print(f"Debug: Synchronized agent_messages. Total messages: {len(audio_capture_wrapper.agent_messages)}")
             print("finish setup the audio capture !!")
 
         logger.info("Starting audio capture test... Press Ctrl+C to stop.")

@@ -274,6 +274,7 @@ class ASR_LLM_Manager:
                                     {"role": "assistant", "content": current_response}
                                 )
                                 logger.info(f"Current response: {current_response}")
+                                print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
                                 # Send stream end
                                 await self.publish_text_livekit("[DONE]")
                                 break
