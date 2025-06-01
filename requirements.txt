@@ -1,20 +1,21 @@
 openai
 cartesia
-psutil
+# psutil
 requests
 numpy
 pysbd
 pyaudio
 dotenv==0.9.9
 resampy
+awslambdaric
 
 onnxruntime==1.20.1
-onnxruntime-gpu==1.18.0
+# onnxruntime-gpu==1.18.0
 
 
 livekit==0.21.3
 livekit-agents==0.12.17
 livekit-api==0.8.2
-livekit-protocol==0.9.2
+# livekit-protocol==0.9.2
 
 

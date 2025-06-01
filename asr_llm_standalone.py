@@ -267,6 +267,7 @@ class ASR_LLM_Manager:
                                 )
                                 for segment in remaining_segments:
                                     print("sending segment in final: ", segment, '\n', flush=True)
+                                    logger.info(f"sending segment in final: {segment} \n")
                                     await self.publish_text_livekit(segment)
 
                                 self.messages.append(
@@ -288,6 +289,7 @@ class ASR_LLM_Manager:
                                     )
                                     for segment in segments:
                                         print("sending segment: ", segment, '\n', flush=True)
+                                        logger.info(f"sending segment: {segment} \n")
                                         await self.publish_text_livekit(segment)
 
                             except json.JSONDecodeError:

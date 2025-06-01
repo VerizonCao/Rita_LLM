@@ -221,7 +221,15 @@ async def main_room(room: rtc.Room, room_name: str):
 
             # check if user left every 300 loops
             if loop_count % 30 == 0:
-                if not room.remote_participants or room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
+                # Check if there are no remote participants or if the only participant is an agent-avatar
+                has_valid_participant = False
+                if room.remote_participants:
+                    for participant in room.remote_participants.values():
+                        if not (participant.attributes and participant.attributes.get("role") == "agent-avatar"):
+                            has_valid_participant = True
+                            break
+
+                if not has_valid_participant or room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
                     user_left_loop_count += 1
                     print(f"user not in room or room disconnected count + 1, total {user_left_loop_count}")
                     if user_left_loop_count > user_left_confirm_number:
@@ -244,13 +252,11 @@ async def main_room(room: rtc.Room, room_name: str):
                             print("No remote participants available to send message to")
                             continue
                             
-                        # Parse the JSON content string
-                        content = json.loads(message["content"])
-                        if content.get("Dialogue"):
-                            print("send complete agent message: ", content["Dialogue"])
-                            # Send to chat for backward compatibility
+                        response_content = message["content"]
+                        if len(response_content) > 0:
+                            print("send agent message: ", response_content)
                             await room.local_participant.send_text(
-                                text=content["Dialogue"],
+                                text=response_content,
                                 topic="lk.chat",
                             )
                     except Exception as e:
@@ -326,6 +332,62 @@ def run_async_room_connection(room_name: str):
         finally:
             if not loop.is_closed():
                 loop.close()
+
+def handler(event, context):
+    """
+    AWS Lambda handler function to process incoming events and start room connections.
+    
+    Args:
+        event (dict): The event data containing room information
+        context (object): The Lambda context object
+    
+    Returns:
+        dict: Response containing status code and message
+    """
+    try:
+        # Handle direct invocation (not through SQS)
+        if "Records" not in event:
+            room_name = event.get("room_name", "test-room")
+            print(f"Starting room connection for room: {room_name}")
+            # Direct call since run_async_room_connection manages its own event loop
+            run_async_room_connection(room_name)
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "Room connection started successfully",
+                    "room_name": room_name
+                })
+            }
+
+        # Handle SQS events
+        for record in event["Records"]:
+            try:
+                body = json.loads(record["body"])
+                room_name = body.get("room_name", "test-room")
+                print(f"Starting room connection for room: {room_name}")
+                # Direct call since run_async_room_connection manages its own event loop
+                run_async_room_connection(room_name)
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON from record: {str(e)}")
+                continue
+            except Exception as e:
+                print(f"Error processing record: {str(e)}")
+                continue
+        
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Room connections started successfully"
+            })
+        }
+    except Exception as e:
+        print(f"Error in handler: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "error": str(e)
+            })
+        }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start the room connection with a specified room name')
