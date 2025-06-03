@@ -165,6 +165,7 @@ class SileroVoiceActivityDetector:
             threshold: VAD threshold (0-1). Speech is detected if the model's output probability is above this value.
             window_size_samples: Window size (in samples) that the model processes internally. This affects the model's internal processing.
         """
+        logger.info(f"Initializing Silero VAD with model path: {model_path}")
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         self.threshold = threshold
@@ -201,8 +202,11 @@ class SileroVoiceActivityDetector:
 
     def _init_onnx_model(self, model_path: str):
         """Initialize ONNX runtime session with optimized settings."""
+        logger.info(f"Loading Silero VAD model from: {model_path}")
         if not Path(model_path).exists():
-            raise FileNotFoundError(f"Model file not found: {model_path}")
+            error_msg = f"Model file not found: {model_path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
 
         try:
             # Optimize ONNX Runtime settings
@@ -217,9 +221,16 @@ class SileroVoiceActivityDetector:
                 model_path, sess_options, providers=["CPUExecutionProvider"]
             )
             logger.info(f"Successfully loaded ONNX model from {model_path}")
+            
+            # Log model input and output names
+            self.input_name = self.session.get_inputs()[0].name
+            self.output_name = self.session.get_outputs()[0].name
+            logger.info(f"Model input name: {self.input_name}, output name: {self.output_name}")
+            
         except Exception as e:
-            logger.error(f"Failed to load ONNX model: {str(e)}")
-            raise
+            error_msg = f"Failed to initialize Silero VAD model: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
     def _preprocess_audio(self, audio_data: np.ndarray) -> np.ndarray:
         """
@@ -282,7 +293,10 @@ class SileroVoiceActivityDetector:
             # Update hidden states
             self.h = outputs[1]  # New hidden state
             self.c = outputs[2]  # New cell state
-            speech_prob = outputs[0][0]  # Speech probability
+            speech_prob = float(outputs[0][0])  # Convert to float for logging
+
+            # Log speech probability
+            logger.debug(f"Speech probability: {speech_prob:.4f}")
 
             # Determine if speech is present
             speech = speech_prob > self.threshold
@@ -294,7 +308,7 @@ class SileroVoiceActivityDetector:
                 if not self.is_speech and self.speech_counter >= self.min_speech_frames:
                     self.is_speech = True
                     self.speech_counter = 0
-                    logger.debug("Speech started")
+                    logger.info(f"Speech started (probability: {speech_prob:.4f})")
                     return True, True
             else:
                 self.silence_counter += 1
@@ -302,7 +316,7 @@ class SileroVoiceActivityDetector:
                 if self.is_speech and self.silence_counter >= self.min_silence_frames:
                     self.is_speech = False
                     self.silence_counter = 0
-                    logger.debug("Speech ended")
+                    logger.info(f"Speech ended (probability: {speech_prob:.4f})")
                     return True, False
 
             return False, self.is_speech

@@ -10,8 +10,8 @@ class AliveInferenceConfig:
         self.vid_fps = 25
 
         # input io
-        io_file_path = self.check_file_paths()
-        self.io_init(io_file_path)
+        self.file_path = self.check_file_paths()
+        self.io_init(self.file_path)
 
         # audio2motion inference param
         self.a2m_cfg = 0.5
@@ -92,14 +92,8 @@ class AliveInferenceConfig:
         return file_path
 
     def replace_base_serve_image(self, avatarSource: str):
-        current_dir = os.path.dirname(__file__)
-        file_path = os.path.join(current_dir, "file_paths.json")
-        assert os.path.exists(
-            file_path
-        ), "file_paths.json does not exist in the current directory"
-
         # Read the current JSON file
-        with open(file_path, "r") as f:
+        with open(self.file_path, "r") as f:
             data = json.load(f)
 
         # Update the io_source_portrait_path
@@ -107,7 +101,7 @@ class AliveInferenceConfig:
         data["io_source_portrait_path"] = avatarSource
 
         # Write the updated JSON back to the file
-        with open(file_path, "w") as f:
+        with open(self.file_path, "w") as f:
             json.dump(data, f, indent=4)
 
         return old_serve_path
@@ -125,14 +119,8 @@ class AliveInferenceConfig:
         return llm_data
 
     def replace_all_llm(self, llm_configs, io_source_portrait_folder_reset=None, avatar_id=None):
-        current_dir = os.path.dirname(__file__)
-        file_path = os.path.join(current_dir, "file_paths.json")
-        assert os.path.exists(
-            file_path
-        ), "file_paths.json does not exist in the current directory"
-
         # Read the current JSON file
-        with open(file_path, "r") as f:
+        with open(self.file_path, "r") as f:
             data = json.load(f)
 
         # Extract only LLM-related fields
@@ -156,7 +144,6 @@ class AliveInferenceConfig:
             else:
                 io_source_portrait_folder_new = os.path.join(temp_dir, io_source_portrait_folder_old)
 
-
         # Update the LLM fields with new values only if they are not empty and different from current value
         for field in old_llm_configs.keys():
             if (
@@ -175,7 +162,7 @@ class AliveInferenceConfig:
             data["io_source_portrait_folder"] = io_source_portrait_folder_new
 
         # Write the updated JSON back to the file
-        with open(file_path, "w") as f:
+        with open(self.file_path, "w") as f:
             json.dump(data, f, indent=4)
 
         return old_llm_configs, io_source_portrait_folder_old

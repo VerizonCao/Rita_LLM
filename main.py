@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from livekit import rtc, api
 import argparse
 import json
+import shutil
 
 from alive_inference_status import ALRealtimeIOAndStatus
 from alive_inference_config import AliveInferenceConfig
@@ -39,7 +40,38 @@ logger = logging.getLogger(__name__)
 config = AliveInferenceConfig()
 status = ALRealtimeIOAndStatus()
 
-async def main_room(room: rtc.Room, room_name: str):
+def override_llm_properties(config: AliveInferenceConfig, override_config: dict):
+    """
+    Override LLM properties in the configuration
+    
+    Args:
+        config: AliveInferenceConfig instance
+        override_config: Dictionary containing LLM properties to override
+    """
+    # Create a temporary copy of file_paths.json in /tmp
+    import shutil
+    import os
+    
+    # Get the original file path
+    current_dir = os.path.dirname(__file__)
+    original_file_path = os.path.join(current_dir, "file_paths.json")
+    temp_file_path = "/tmp/file_paths.json"
+    
+    # Copy the file to /tmp
+    shutil.copy2(original_file_path, temp_file_path)
+    
+    # Update the config to use the temporary file
+    config.file_path = temp_file_path
+    
+    # Now perform the override
+    old_llm_config, old_io_source_portrait_folder = config.replace_all_llm(override_config)
+    
+    # We don't try to copy back to the original location since it's read-only
+    # Instead, we'll just use the temporary file for the rest of the session
+    
+    return old_llm_config, old_io_source_portrait_folder
+
+async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
     # Create a class to hold our state
     class RoomState:
         def __init__(self):
@@ -49,9 +81,29 @@ async def main_room(room: rtc.Room, room_name: str):
             self.agent_message_count = 0  # Track number of agent messages processed
             self.text_stream_writer = None  # Store the text stream writer
             self.voice_transcription_count = 0  # Track number of voice transcriptions processed
+            self.old_llm_config = None  # Store old LLM config for cleanup
+            self.old_io_source_portrait_folder = None  # Store old portrait folder for cleanup
+            self.temp_file_path = None  # Store temporary file path for cleanup
 
     state = RoomState()
     loop = asyncio.get_event_loop()  # Get the current event loop
+
+    # Override LLM properties if provided
+    if llm_overrides:
+        state.old_llm_config, state.old_io_source_portrait_folder = override_llm_properties(config, llm_overrides)
+        # Re-initialize the config to load the new values
+        config.io_init(config.file_path)
+
+    # Initialize audio capture wrapper and start audio thread before room connection
+    state.audio_capture_wrapper = AudioCaptureWrapper()
+    audio_thread = run_audio2audio_in_thread(
+        status=status,
+        config=config,
+        audio_play_locally=False,
+        audio_capture_wrapper=state.audio_capture_wrapper,
+        room=room,  # Pass the room to the wrapper
+        loop=loop,  # Pass the event loop to the wrapper
+    )
 
     @room.on("participant_connected")
     def on_participant_connected(participant: rtc.RemoteParticipant) -> None:
@@ -99,25 +151,8 @@ async def main_room(room: rtc.Room, room_name: str):
             
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             print("Subscribed to an Audio Track!")
-            # Initialize audio capture if not already done
-            if not state.audio_capture_wrapper:
-                state.audio_capture_wrapper = AudioCaptureWrapper()
-                # Start audio processing thread
-                audio_thread = run_audio2audio_in_thread(
-                    status=status,
-                    config=config,
-                    audio_play_locally=False,
-                    audio_capture_wrapper=state.audio_capture_wrapper,
-                    room=room,  # Pass the room to the wrapper
-                    loop=loop,  # Pass the event loop to the wrapper
-                )
-                # Wait for audio capture to be ready
-                while not state.audio_capture_wrapper.audio_capture:
-                    time.sleep(0.1)
-                print("Audio capture is ready!")
-            
             # Set the audio track in the wrapper
-            if state.audio_capture_wrapper.audio_capture:
+            if state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
                 state.audio_capture_wrapper.audio_capture.audio_track = publication.track
                 print("Audio track set in wrapper")
 
@@ -255,6 +290,7 @@ async def main_room(room: rtc.Room, room_name: str):
                         response_content = message["content"]
                         if len(response_content) > 0:
                             print("send agent message: ", response_content)
+                            # don't do it for now, since we still let livekit to do this
                             await room.local_participant.send_text(
                                 text=response_content,
                                 topic="lk.chat",
@@ -269,6 +305,7 @@ async def main_room(room: rtc.Room, room_name: str):
                 print(f"Message processing time: {processing_time:.2f}ms")
 
             # Check for voice transcriptions
+            # if (False):
             if (
                 state.audio_capture_wrapper 
                 and state.audio_capture_wrapper.audio_capture 
@@ -309,9 +346,26 @@ async def main_room(room: rtc.Room, room_name: str):
             print(f"Error in main loop: {e}")
             break
 
+    # Restore original LLM configuration if it was overridden
+    if state.old_llm_config:
+        config.replace_all_llm(state.old_llm_config, io_source_portrait_folder_reset=state.old_io_source_portrait_folder)
+        # Clean up temporary portrait folder if it exists
+        if state.old_io_source_portrait_folder and os.path.exists(state.old_io_source_portrait_folder):
+            try:
+                shutil.rmtree(state.old_io_source_portrait_folder)
+            except Exception as e:
+                print(f"Error cleaning up portrait folder: {e}")
+        
+        # Clean up temporary file if it exists
+        if os.path.exists("/tmp/file_paths.json"):
+            try:
+                os.remove("/tmp/file_paths.json")
+            except Exception as e:
+                print(f"Error cleaning up temporary file: {e}")
+
     return state  # Return the state object
 
-def run_async_room_connection(room_name: str):
+def run_async_room_connection(room_name: str, llm_overrides: dict = None):
     """Wrapper function to run async function in a thread"""
     print("start running the room connection!")
 
@@ -344,7 +398,7 @@ def run_async_room_connection(room_name: str):
     async def run_with_cleanup():
         nonlocal state
         try:
-            state = await main_room(room, room_name)
+            state = await main_room(room, room_name, llm_overrides)
         finally:
             await cleanup()
             # Stop the event loop when we're done
@@ -383,14 +437,24 @@ def handler(event, context):
         # Handle direct invocation (not through SQS)
         if "Records" not in event:
             room_name = event.get("room_name", "test-room")
+            # Get LLM properties and filter out empty values
+            llm_properties = {k: v for k, v in event.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia"}
+            if llm_properties:
+                llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
+                if not llm_properties:  # If all values were empty, set to None
+                    llm_properties = None
+                else:
+                    print(f"Applying LLM properties: {llm_properties}")
+            
             print(f"Starting room connection for room: {room_name}")
             # Direct call since run_async_room_connection manages its own event loop
-            run_async_room_connection(room_name)
+            run_async_room_connection(room_name, llm_properties)
             return {
                 "statusCode": 200,
                 "body": json.dumps({
                     "message": "Room connection started successfully",
-                    "room_name": room_name
+                    "room_name": room_name,
+                    "applied_properties": llm_properties if llm_properties else None
                 })
             }
 
@@ -399,9 +463,18 @@ def handler(event, context):
             try:
                 body = json.loads(record["body"])
                 room_name = body.get("room_name", "test-room")
+                # Get LLM properties and filter out empty values
+                llm_properties = {k: v for k, v in body.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia"}
+                if llm_properties:
+                    llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
+                    if not llm_properties:  # If all values were empty, set to None
+                        llm_properties = None
+                    else:
+                        print(f"Applying LLM properties: {llm_properties}")
+                
                 print(f"Starting room connection for room: {room_name}")
                 # Direct call since run_async_room_connection manages its own event loop
-                run_async_room_connection(room_name)
+                run_async_room_connection(room_name, llm_properties)
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON from record: {str(e)}")
                 continue
@@ -427,6 +500,25 @@ def handler(event, context):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start the room connection with a specified room name')
     parser.add_argument('--room', type=str, default='test-room', help='Name of the room to connect to')
+    parser.add_argument('--properties', type=str, help='JSON string containing LLM properties')
     args = parser.parse_args()
     
-    run_async_room_connection(args.room)
+    llm_properties = None
+    if args.properties:
+        try:
+            # Parse the properties directly
+            properties = json.loads(args.properties)
+            # Filter for LLM properties
+            llm_properties = {k: v for k, v in properties.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia"}
+            # Filter out empty values
+            if llm_properties:
+                llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
+                if not llm_properties:  # If all values were empty, set to None
+                    llm_properties = None
+                else:
+                    print(f"Applying LLM properties: {llm_properties}")
+        except json.JSONDecodeError as e:
+            print(f"Error parsing properties JSON: {e}")
+            exit(1)
+    
+    run_async_room_connection(args.room, llm_properties)

@@ -226,6 +226,15 @@ class ASR_LLM_Manager:
             "provider": {"sort": "latency"},
         }
 
+        # Print system prompt and messages for debugging
+        # print("\n=== System Prompt ===")
+        # print(self.system_prompt)
+        # print("\n=== Message History ===")
+        # for msg in self.messages:
+        #     print(f"\nRole: {msg['role']}")
+        #     print(f"Content: {msg['content']}")
+        # print("\n=== End Message History ===\n")
+
         # Send stream start at the beginning
         await self.publish_text_livekit("[START]")
 

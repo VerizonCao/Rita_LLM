@@ -42,6 +42,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.current_audio = []
         self.sample_rate = 24000
         self.status = status
+        self.config = config  # Store config reference
         self.asr_llm_manager = ASR_LLM_Manager(
             llm_data=config.get_llm_tuple(),
             room=room,
@@ -53,9 +54,19 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.audio_track = audio_track
         self.room = room
         self.loop = loop
+        self.current_temp_file = None  # Track the current temporary file
 
         self.text_input = None
         self.text_input_voice = []
+
+    def update_llm_manager(self):
+        """Update the ASR_LLM_Manager with new LLM data"""
+        if self.asr_llm_manager:
+            # Create a new ASR_LLM_Manager with updated config
+            self.asr_llm_manager = ASR_LLM_Manager(
+                llm_data=self.config.get_llm_tuple(),
+                room=self.room,
+            )
 
     def interrupt_processing(self):
         if self.processing_thread and self.processing_thread.is_alive():
@@ -67,16 +78,31 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
             self.asr_llm_manager.user_interrupting_flag = True
 
     def save_audio_to_temp_file(self):
-        time_stamp = time.time()
-        temp_file = os.path.join(tempfile.gettempdir(), f"temp_audio_{time_stamp}.wav")
+        """Save accumulated audio to a temporary WAV file"""
+        try:
+            # Clean up any existing temp file
+            if self.current_temp_file and os.path.exists(self.current_temp_file):
+                try:
+                    os.remove(self.current_temp_file)
+                    logger.info(f"Cleaned up previous temp file: {self.current_temp_file}")
+                except Exception as e:
+                    logger.error(f"Error cleaning up previous temp file: {e}")
 
-        with wave.open(temp_file, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(array.array("h", self.current_audio).tobytes())
+            time_stamp = time.time()
+            temp_file = os.path.join(tempfile.gettempdir(), f"temp_audio_{time_stamp}.wav")
+            logger.info(f"Creating new temp file: {temp_file}")
 
-        return temp_file
+            with wave.open(temp_file, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(array.array("h", self.current_audio).tobytes())
+
+            self.current_temp_file = temp_file
+            return temp_file
+        except Exception as e:
+            logger.error(f"Error creating temp file: {e}")
+            return None
 
     def send_audio_data(self, audio_data: bytes):
         if self.is_speaking:
@@ -131,6 +157,9 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
 
         if len(self.current_audio) > 0:
             temp_file = self.save_audio_to_temp_file()
+            if not temp_file:
+                logger.error("Failed to create temp file for speech processing")
+                return
 
             def process_audio_pipeline():
                 try:
@@ -141,7 +170,15 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                     transcription_text = self.asr_llm_manager.speech_to_text(
                         temp_file, self.speech_end_time
                     )
-                    os.remove(temp_file)
+                    
+                    # Remove temp file after successful transcription
+                    try:
+                        os.remove(temp_file)
+                        logger.info(f"Removed temp file after transcription: {temp_file}")
+                        self.current_temp_file = None
+                    except Exception as e:
+                        logger.error(f"Error removing temp file after transcription: {e}")
+
                     self.text_input_voice.append(transcription_text)
 
                     if self.stop_processing.is_set():
@@ -159,8 +196,14 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                 except Exception as e:
                     logger.error(f"Error during async processing: {e}")
                 finally:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
+                    # Ensure temp file is cleaned up
+                    if temp_file and os.path.exists(temp_file):
+                        try:
+                            os.remove(temp_file)
+                            logger.info(f"Removed temp file in finally block: {temp_file}")
+                            self.current_temp_file = None
+                        except Exception as e:
+                            logger.error(f"Error removing temp file in finally block: {e}")
 
             self.interrupt_processing()
             self.processing_thread = threading.Thread(target=process_audio_pipeline)
@@ -173,7 +216,15 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         pass
 
     def __del__(self):
+        """Cleanup when the handler is destroyed"""
         self.interrupt_processing()
+        # Clean up any remaining temp file
+        if self.current_temp_file and os.path.exists(self.current_temp_file):
+            try:
+                os.remove(self.current_temp_file)
+                logger.info(f"Cleaned up temp file in destructor: {self.current_temp_file}")
+            except Exception as e:
+                logger.error(f"Error cleaning up temp file in destructor: {e}")
         if hasattr(self, "asr_llm_manager"):
             del self.asr_llm_manager
 
