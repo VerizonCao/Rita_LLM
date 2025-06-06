@@ -11,11 +11,14 @@ from system_prompt import LLM_System_Prompt
 from livekit import rtc  # Add LiveKit import
 from livekit.rtc import TextStreamWriter  # Add TextStreamWriter import
 import asyncio
+from dotenv import load_dotenv
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
+# Import chat system
+from data import ChatSessionManager
 
 # Configure logging
 logging.basicConfig(
@@ -73,6 +76,9 @@ class ASR_LLM_Manager:
         self.user_id = user_id
         self.avatar_id = avatar_id
 
+        # Initialize simplified chat session manager
+        self.chat_session_manager = ChatSessionManager()
+
         self.expression_list = expression_list
         system_prompt_obj: LLM_System_Prompt = LLM_System_Prompt(
             assistant_name=assistant_nickname,
@@ -83,9 +89,13 @@ class ASR_LLM_Manager:
         )
         self.system_prompt = system_prompt_obj.get_system_prompt()
 
+        # Initialize messages with system prompt (always first, not stored in DB)
         self.messages = [
             {"role": "system", "content": self.system_prompt},
         ]
+
+        # Load conversation history from database and populate messages
+        self._load_conversation_history()
 
         # Initialize text chunk splitter
         self.text_chunk_spliter = TextChunkSpliter()
@@ -97,6 +107,24 @@ class ASR_LLM_Manager:
             "llm_first_token_time": -1,
         }
         self.user_interrupting_flag = False
+
+    def _load_conversation_history(self):
+        """Load conversation history from database and populate self.messages"""
+        try:
+            # Read history using simplified interface
+            history = self.chat_session_manager.read_history(
+                user_id=self.user_id,
+                avatar_id=self.avatar_id,
+                max_messages=50  # Load recent 50 messages
+            )
+            
+            # Add history to messages (system prompt is already first)
+            if history:
+                self.messages.extend(history)
+                logger.info(f"Loaded {len(history)} messages from conversation history")
+            
+        except Exception as e:
+            logger.error(f"Failed to load conversation history: {e}")
 
     def speech_to_text(self, audio_file_path, speech_end_time):
         """Convert speech to text using Whisper API"""
@@ -222,7 +250,20 @@ class ASR_LLM_Manager:
         buffer = ""
         current_response = ""
 
+        # Add user message to self.messages (single source of truth)
         self.messages.append({"role": "user", "content": text})
+        
+        # Save user message to database
+        try:
+            self.chat_session_manager.write_user_message(
+                user_id=self.user_id,
+                avatar_id=self.avatar_id,
+                content=text,
+                user_name=self.user_nickname or "User"
+            )
+        except Exception as e:
+            logger.error(f"Failed to save user message to database: {e}")
+
         payload = {
             "model": "deepseek/deepseek-chat-v3-0324",
             "messages": self.messages,
@@ -283,11 +324,25 @@ class ASR_LLM_Manager:
                                     logger.info(f"sending segment in final: {segment} \n")
                                     await self.publish_text_livekit(segment)
 
+                                # Add assistant message to self.messages (single source of truth)
                                 self.messages.append(
                                     {"role": "assistant", "content": current_response}
                                 )
                                 logger.info(f"Current response: {current_response}")
                                 print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
+                                
+                                # Save LLM response to database
+                                try:
+                                    self.chat_session_manager.write_assistant_message(
+                                        user_id=self.user_id,
+                                        avatar_id=self.avatar_id,
+                                        content=current_response,
+                                        assistant_name=self.assistant_nickname or "Assistant",
+                                        model="deepseek/deepseek-chat-v3-0324"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Failed to save LLM response to database: {e}")
+                                
                                 # Send stream end
                                 await self.publish_text_livekit("[DONE]")
                                 break

@@ -22,7 +22,12 @@ from local_asrllm_seperated_from_tts_livekit import (
 )
 
 # Load environment variables
-load_dotenv(dotenv_path=".env.local")
+if os.path.exists(".env"):
+    load_dotenv(dotenv_path=".env")
+elif os.path.exists(".env.local"):
+    load_dotenv(dotenv_path=".env.local")
+else:
+    raise ValueError("No environment file found, did you forget to add .env or .env.local?")
 
 # Disable aiohttp access logs
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
