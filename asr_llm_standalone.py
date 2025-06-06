@@ -60,6 +60,8 @@ class ASR_LLM_Manager:
             assistant_additional_characteristics,
             conversation_context,
             expression_list,
+            user_id,
+            avatar_id,
         ) = llm_data
         self.user_nickname = user_nickname
         self.user_bio = user_bio
@@ -68,6 +70,8 @@ class ASR_LLM_Manager:
         self.assistant_additional_characteristics = assistant_additional_characteristics
         self.conversation_context = conversation_context
         self.expression_list = expression_list
+        self.user_id = user_id
+        self.avatar_id = avatar_id
 
         self.expression_list = expression_list
         system_prompt_obj: LLM_System_Prompt = LLM_System_Prompt(

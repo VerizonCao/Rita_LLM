@@ -69,6 +69,9 @@ class AliveInferenceConfig:
                 else ""
             )
             self.llm_expression_list = ["neutral-neutral"]
+            # Additional fields
+            self.user_id = data["user_id"] if "user_id" in data else ""
+            self.avatar_id = data["avatar_id"] if "avatar_id" in data else ""
             # TTS
             self.tts_voice_id_cartesia = (
                 data["tts_voice_id_cartesia"]
@@ -115,6 +118,8 @@ class AliveInferenceConfig:
             self.llm_assistant_additional_characteristics,
             self.llm_conversation_context,
             self.llm_expression_list,
+            self.user_id,
+            self.avatar_id,
         )
         return llm_data
 
@@ -123,7 +128,7 @@ class AliveInferenceConfig:
         with open(self.file_path, "r") as f:
             data = json.load(f)
 
-        # Extract only LLM-related fields
+        # Extract only LLM-related fields and additional fields
         old_llm_configs = {
             "llm_user_nickname": data["llm_user_nickname"],
             "llm_user_bio": data["llm_user_bio"],
@@ -134,6 +139,8 @@ class AliveInferenceConfig:
             ],
             "llm_conversation_context": data["llm_conversation_context"],
             "tts_voice_id_cartesia": data["tts_voice_id_cartesia"],
+            "user_id": data["user_id"] if "user_id" in data else "",
+            "avatar_id": data["avatar_id"] if "avatar_id" in data else "",
         }
 
         io_source_portrait_folder_old = data["io_source_portrait_folder"]

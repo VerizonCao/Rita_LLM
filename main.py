@@ -437,14 +437,15 @@ def handler(event, context):
         # Handle direct invocation (not through SQS)
         if "Records" not in event:
             room_name = event.get("room_name", "test-room")
-            # Get LLM properties and filter out empty values
-            llm_properties = {k: v for k, v in event.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia"}
+            # Get LLM properties and additional fields, filter out empty values
+            llm_properties = {k: v for k, v in event.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia" or k == "user_id" or k == "avatar_id"}
             if llm_properties:
                 llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
                 if not llm_properties:  # If all values were empty, set to None
                     llm_properties = None
                 else:
                     print(f"Applying LLM properties: {llm_properties}")
+                    print(f"user_id: {llm_properties['user_id']}, avatar_id: {llm_properties['avatar_id']}")
             
             print(f"Starting room connection for room: {room_name}")
             # Direct call since run_async_room_connection manages its own event loop
@@ -463,14 +464,15 @@ def handler(event, context):
             try:
                 body = json.loads(record["body"])
                 room_name = body.get("room_name", "test-room")
-                # Get LLM properties and filter out empty values
-                llm_properties = {k: v for k, v in body.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia"}
+                # Get LLM properties and additional fields, filter out empty values
+                llm_properties = {k: v for k, v in body.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia" or k == "user_id" or k == "avatar_id"}
                 if llm_properties:
                     llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
                     if not llm_properties:  # If all values were empty, set to None
                         llm_properties = None
                     else:
                         print(f"Applying LLM properties: {llm_properties}")
+                        print(f"user_id: {llm_properties['user_id']}, avatar_id: {llm_properties['avatar_id']}")
                 
                 print(f"Starting room connection for room: {room_name}")
                 # Direct call since run_async_room_connection manages its own event loop
@@ -508,8 +510,8 @@ if __name__ == "__main__":
         try:
             # Parse the properties directly
             properties = json.loads(args.properties)
-            # Filter for LLM properties
-            llm_properties = {k: v for k, v in properties.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia"}
+            # Filter for LLM properties and additional fields
+            llm_properties = {k: v for k, v in properties.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia" or k == "user_id" or k == "avatar_id"}
             # Filter out empty values
             if llm_properties:
                 llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
@@ -517,6 +519,7 @@ if __name__ == "__main__":
                     llm_properties = None
                 else:
                     print(f"Applying LLM properties: {llm_properties}")
+                    print(f"user_id: {llm_properties['user_id']}, avatar_id: {llm_properties['avatar_id']}")
         except json.JSONDecodeError as e:
             print(f"Error parsing properties JSON: {e}")
             exit(1)
