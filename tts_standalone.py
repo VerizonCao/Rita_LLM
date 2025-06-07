@@ -18,6 +18,7 @@ import numpy as np
 import queue
 import threading
 import socket
+import pyaudio
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent

@@ -8,6 +8,7 @@ import array
 import time
 import psutil
 import numpy as np
+import asyncio  # Add asyncio import for running async functions
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -47,7 +48,6 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.current_audio = []
         self.sample_rate = 24000
         self.asr_llm_manager = ASR_LLM_Manager(
-            publish_locally=True,
             llm_data=config.get_llm_tuple(),
         )
         self.status = status
@@ -108,7 +108,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
             temp_file = self.save_audio_to_temp_file()
 
             # Process through AI pipeline in a separate thread
-            def process_audio_pipeline():
+            async def process_audio_pipeline_async():
                 try:
                     # Check if we should stop at each major step
                     if self.stop_processing.is_set():
@@ -124,7 +124,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                         logger.info("Processing interrupted before LLM")
                         return
 
-                    llm_response = self.asr_llm_manager.send_to_openrouter(
+                    await self.asr_llm_manager.send_to_openrouter(
                         transcription_text
                     )
 
@@ -137,6 +137,10 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                 finally:
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
+
+            def process_audio_pipeline():
+                # Run the async function in this thread
+                asyncio.run(process_audio_pipeline_async())
 
             # Interrupt any existing processing before starting new thread
             self.interrupt_processing()
