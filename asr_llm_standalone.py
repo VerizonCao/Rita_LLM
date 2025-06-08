@@ -238,6 +238,29 @@ class ASR_LLM_Manager:
                 except:
                     pass
                 self.text_stream_writer = None
+                
+    def final_response_format_check(self, text):
+        response = text.strip()
+        
+        # Find first and second double asterisks
+        double_asterisks_1 = response.find('**')
+        if double_asterisks_1 == -1:
+            return response  # No asterisks found, return raw text
+        
+        double_asterisks_2 = response.find('**', double_asterisks_1 + 2)
+        if double_asterisks_2 == -1:
+            return response  # Only one pair found, return raw text
+        
+        # Get content before first ** (strip)
+        content_before = response[:double_asterisks_1].strip()
+        
+        # Get content between first and second ** (strip)
+        content_between = response[double_asterisks_1 + 2:double_asterisks_2].strip()
+        
+        # Make the full response
+        formatted_result = f"{content_before}\n\n**{content_between}**"
+        
+        return formatted_result
 
     async def send_to_openrouter(self, text):
         """
@@ -317,6 +340,9 @@ class ASR_LLM_Manager:
                                 print("sending segment in final: ", segment, '\n', flush=True)
                                 logger.info(f"sending segment in final: {segment} \n")
                                 await self.publish_text_livekit(segment)
+                                
+                            # final response format check
+                            current_response = self.final_response_format_check(current_response)
 
                             # Add assistant message to self.messages (single source of truth)
                             self.messages.append(
