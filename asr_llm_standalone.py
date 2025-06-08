@@ -290,86 +290,77 @@ class ASR_LLM_Manager:
             stream=True,
         ) as r:
             r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=512, decode_unicode=True):
-                if not first_llm_token_received:
-                    first_llm_token_received = True
-                    self.timing["llm_first_token_time"] = time.time()
-                    if self.timing["whisper_end_time"] != -1:
-                        logger.info(
-                            f"Time from whisper end to LLM first token: {self.timing['llm_first_token_time'] - self.timing['whisper_end_time']:.2f} seconds"
-                        )
-                    # Send timing information after first token
-                    # await self.publish_text_livekit(f"[speech_end_time]: {self.timing['speech_end_time']}")
-                    # await self.publish_text_livekit(f"[llm_first_token_time]: {self.timing['llm_first_token_time']}")
+            # Ensure proper UTF-8 encoding
+            r.encoding = "utf-8"
+            for chunk in r.iter_lines(chunk_size=1024, decode_unicode=True):
+                if chunk:  # filter out keep-alive new chunks
+                    line = chunk.strip()
+                    if not first_llm_token_received:
+                        first_llm_token_received = True
+                        self.timing["llm_first_token_time"] = time.time()
+                        if self.timing["whisper_end_time"] != -1:
+                            logger.info(
+                                f"Time from whisper end to LLM first token: {self.timing['llm_first_token_time'] - self.timing['whisper_end_time']:.2f} seconds"
+                            )
+                        # Send timing information after first token
+                        # await self.publish_text_livekit(f"[speech_end_time]: {self.timing['speech_end_time']}")
+                        # await self.publish_text_livekit(f"[llm_first_token_time]: {self.timing['llm_first_token_time']}")
 
-                buffer += chunk
-                while True:
-                    try:
-                        line_end = buffer.find("\n")
-                        if line_end == -1:
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            # Process any remaining buffer content
+                            remaining_segments = (
+                                self.text_chunk_spliter.get_remaining_buffer()
+                            )
+                            for segment in remaining_segments:
+                                print("sending segment in final: ", segment, '\n', flush=True)
+                                logger.info(f"sending segment in final: {segment} \n")
+                                await self.publish_text_livekit(segment)
+
+                            # Add assistant message to self.messages (single source of truth)
+                            self.messages.append(
+                                {"role": "assistant", "content": current_response}
+                            )
+                            logger.info(f"Current response: {current_response}")
+                            print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
+                            
+                            # Save LLM response to database
+                            try:
+                                self.chat_session_manager.write_assistant_message(
+                                    user_id=self.user_id,
+                                    avatar_id=self.avatar_id,
+                                    content=current_response,
+                                    assistant_name=self.assistant_nickname or "Assistant",
+                                    model="deepseek/deepseek-chat-v3-0324"
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to save LLM response to database: {e}")
+                            
+                            # Send stream end
+                            await self.publish_text_livekit("[DONE]")
                             break
 
-                        line = buffer[:line_end].strip()
-                        buffer = buffer[line_end + 1 :]
-
-                        if line.startswith("data: "):
-                            data = line[6:]
-                            if data == "[DONE]":
-                                # Process any remaining buffer content
-                                remaining_segments = (
-                                    self.text_chunk_spliter.get_remaining_buffer()
+                        try:
+                            data_obj = json.loads(data)
+                            content = data_obj["choices"][0]["delta"].get("content")
+                            if content:
+                                current_response += content
+                                # Process and print each segment immediately
+                                segments = self.text_chunk_spliter.process_chunk(
+                                    content
                                 )
-                                for segment in remaining_segments:
-                                    print("sending segment in final: ", segment, '\n', flush=True)
-                                    logger.info(f"sending segment in final: {segment} \n")
+                                for segment in segments:
+                                    print("sending segment: ", segment, '\n', flush=True)
+                                    logger.info(f"sending segment: {segment} \n")
                                     await self.publish_text_livekit(segment)
 
-                                # Add assistant message to self.messages (single source of truth)
-                                self.messages.append(
-                                    {"role": "assistant", "content": current_response}
-                                )
-                                logger.info(f"Current response: {current_response}")
-                                print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
-                                
-                                # Save LLM response to database
-                                try:
-                                    self.chat_session_manager.write_assistant_message(
-                                        user_id=self.user_id,
-                                        avatar_id=self.avatar_id,
-                                        content=current_response,
-                                        assistant_name=self.assistant_nickname or "Assistant",
-                                        model="deepseek/deepseek-chat-v3-0324"
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Failed to save LLM response to database: {e}")
-                                
-                                # Send stream end
-                                await self.publish_text_livekit("[DONE]")
-                                break
-
-                            try:
-                                data_obj = json.loads(data)
-                                content = data_obj["choices"][0]["delta"].get("content")
-                                if content:
-                                    current_response += content
-                                    # Process and print each segment immediately
-                                    segments = self.text_chunk_spliter.process_chunk(
-                                        content
-                                    )
-                                    for segment in segments:
-                                        print("sending segment: ", segment, '\n', flush=True)
-                                        logger.info(f"sending segment: {segment} \n")
-                                        await self.publish_text_livekit(segment)
-
-                            except json.JSONDecodeError:
-                                logger.warning(f"Could not decode JSON data: {data}")
-                                pass  # Ignore malformed JSON lines
-                            except Exception as e:
-                                logger.error(f"Error processing stream data chunk: {e}")
-                                break  # Safer to break the inner loop on unexpected errors
-                    except Exception as e:
-                        logger.error(f"Error processing received buffer line: {e}")
-                        break  # Break inner loop on buffer processing error
+                        except json.JSONDecodeError:
+                            logger.warning(f"Could not decode JSON data: {data}")
+                            pass  # Ignore malformed JSON lines
+                        except Exception as e:
+                            logger.error(f"Error processing stream data chunk: {e}")
+                            break  # Safer to break the inner loop on unexpected errors
 
                     if self.user_interrupting_flag:
                         logger.warning("Stopping LLM stream due to user interruption.")
