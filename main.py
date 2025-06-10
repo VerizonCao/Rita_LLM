@@ -293,7 +293,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
             loop_count += 1
 
             # check if user left every 300 loops
-            if loop_count % 10 == 0:
+            if loop_count % 30 == 0:
                 # Check if there are no remote participants or if the only participant is an agent-avatar
                 has_valid_participant = False
                 if room.remote_participants:
