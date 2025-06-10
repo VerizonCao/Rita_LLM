@@ -22,4 +22,9 @@ livekit-api==0.8.2
 psycopg2-binary>=2.9.0
 python-dotenv>=0.19.0
 
+# OpenTelemetry dependencies
+opentelemetry-api>=1.22.0
+opentelemetry-sdk>=1.22.0
+opentelemetry-exporter-otlp
+
 
