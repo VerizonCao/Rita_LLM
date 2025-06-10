@@ -20,6 +20,7 @@ from local_asrllm_seperated_from_tts_livekit import (
     SimpleAudioCaptureHandler,
     AudioCaptureWrapper,
 )
+from telemetry import setup_telemetry, shutdown_telemetry
 
 # Load environment variables
 if os.path.exists(".env"):
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 # Initialize config and status
 config = AliveInferenceConfig()
 status = ALRealtimeIOAndStatus()
+
+# Initialize metrics
+metrics = setup_telemetry()
 
 def override_llm_properties(config: AliveInferenceConfig, override_config: dict):
     """
@@ -89,6 +93,9 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
             self.old_llm_config = None  # Store old LLM config for cleanup
             self.old_io_source_portrait_folder = None  # Store old portrait folder for cleanup
             self.temp_file_path = None  # Store temporary file path for cleanup
+            self.serve_start_time = None  # Track when we start serving
+            self.current_user_id = None  # Track current user ID
+            self.current_avatar_id = None  # Track current avatar ID
 
     state = RoomState()
     loop = asyncio.get_event_loop()  # Get the current event loop
@@ -98,6 +105,9 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
         state.old_llm_config, state.old_io_source_portrait_folder = override_llm_properties(config, llm_overrides)
         # Re-initialize the config to load the new values
         config.io_init(config.file_path)
+        # Store user and avatar IDs if provided
+        state.current_user_id = llm_overrides.get("user_id", "unknown")
+        state.current_avatar_id = llm_overrides.get("avatar_id", "unknown")
 
     # Initialize audio capture wrapper and start audio thread before room connection
     state.audio_capture_wrapper = AudioCaptureWrapper()
@@ -113,6 +123,10 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
     @room.on("participant_connected")
     def on_participant_connected(participant: rtc.RemoteParticipant) -> None:
         logging.info(f"participant connected: {participant.sid} {participant.identity}")
+        # Start tracking serve time when a non-agent participant connects
+        if not (participant.attributes and participant.attributes.get("role") == "agent-avatar"):
+            if not state.serve_start_time:
+                state.serve_start_time = time.time()
 
     @room.on("data_received")
     def on_data_received(data: rtc.DataPacket):
@@ -246,15 +260,34 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
 
     print("room connected!")
 
+    # local test logic. comment me in production
+    # state.serve_start_time = time.time()
+
     # Main loop to keep the connection alive
     loop_count = 0
     user_left_loop_count = 0
-    user_left_confirm_number = 2  # roughly 5s
+    user_left_confirm_number = 2  # roughly 2s
 
     while True:
         try:
             if state.user_left:
                 print("user left the room")
+                # Report final serve time when user leaves
+                if state.serve_start_time:
+                    serve_time = round(time.time() - state.serve_start_time)
+                    print(f"going to report serve time: {serve_time}, avatar_id: {state.current_avatar_id}, user_id: {state.current_user_id}")
+                    metrics["avatar_serve_time"].add(serve_time, {
+                        "avatar_id": state.current_avatar_id or "unknown",
+                        "user_id": state.current_user_id or "unknown"
+                    })
+                    
+                    # Force immediate export of metrics and shutdown telemetry
+                    if "provider" in metrics:
+                        metrics["provider"].force_flush()
+                        shutdown_telemetry(metrics["provider"])
+                    
+                    time.sleep(1)
+
                 break
 
             loop_count += 1
@@ -268,6 +301,9 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                         if not (participant.attributes and participant.attributes.get("role") == "agent-avatar"):
                             has_valid_participant = True
                             break
+
+                if has_valid_participant and not state.serve_start_time:
+                    state.serve_start_time = time.time()
 
                 if not has_valid_participant or room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
                     user_left_loop_count += 1

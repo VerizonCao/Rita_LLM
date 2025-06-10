@@ -158,7 +158,7 @@ class AudioCaptureLiveKit:
         if self.enable_wave_capture:
             try:
                 self.wave_file = wave.open("microphone_output.wav", "wb")
-                self.wave_file.setnchannels(self.channels)
+                self.wave_file.setnchannels(self.channels) 
                 self.wave_file.setsampwidth(
                     self.pyaudio_instance.get_sample_size(FORMAT)
                 )
@@ -242,12 +242,12 @@ class AudioCaptureLiveKit:
             except Exception as e:
                 logger.error(f"Error closing wave file: {e}")
 
-        try:
-            if self.pyaudio_instance is not None and terminate:
-                self.pyaudio_instance.terminate()
-                logger.info("PyAudio terminated.")
-        except Exception as e:
-            logger.error(f"Error terminating PyAudio: {e}")
+        # try:
+            # if self.pyaudio_instance is not None and terminate:
+            #     self.pyaudio_instance.terminate()
+            #     logger.info("PyAudio terminated.")
+        # except Exception as e:
+        #     logger.error(f"Error terminating PyAudio: {e}")
 
         self.is_running = False
         logger.info("AudioCapture has been stopped.")
