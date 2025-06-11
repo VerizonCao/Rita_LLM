@@ -331,11 +331,11 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                         response_content = message["content"]
                         if len(response_content) > 0:
                             print("send agent message: ", response_content)
-                            # don't do it for now, since we still let livekit to do this
-                            await room.local_participant.send_text(
-                                text=response_content,
-                                topic="lk.chat",
-                            )
+                            # replaced this with asrllm manager directly streaming text to frontend
+                            # await room.local_participant.send_text(
+                            #     text=response_content,
+                            #     topic="lk.chat",
+                            # )
                     except Exception as e:
                         print(f"Error sending message: {e}")
                         continue

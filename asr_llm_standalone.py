@@ -238,7 +238,31 @@ class ASR_LLM_Manager:
                 except:
                     pass
                 self.text_stream_writer = None
-                
+
+    async def publish_frontend_stream_livekit(self, stream_type, content):
+        """
+        Publish frontend streaming content directly to LiveKit data channel
+        """
+        if self._is_shutting_down:
+            logger.warning("Skipping frontend stream publish during shutdown")
+            return
+
+        if not self.room:
+            logger.error("No LiveKit room available for frontend streaming")
+            return
+
+        try:
+            await self.room.local_participant.publish_data(
+                json.dumps({
+                    "topic": "frontend_stream",
+                    "type": stream_type,
+                    "text": content
+                })
+            )
+            logger.debug(f"Published frontend stream: {stream_type} - {content[:50] if content else 'N/A'}")
+        except Exception as e:
+            logger.error(f"Error publishing frontend stream to LiveKit: {e}")
+
     def final_response_format_check(self, text):
         response = text.strip()
         
@@ -320,6 +344,10 @@ class ASR_LLM_Manager:
                     line = chunk.strip()
                     if not first_llm_token_received:
                         first_llm_token_received = True
+                        
+                        # Send START marker to frontend immediately via LiveKit
+                        await self.publish_frontend_stream_livekit("START", "")
+                        
                         self.timing["llm_first_token_time"] = time.time()
                         if self.timing["whisper_end_time"] != -1:
                             logger.info(
@@ -365,6 +393,9 @@ class ASR_LLM_Manager:
                             
                             # Send stream end
                             await self.publish_text_livekit("[DONE]")
+                            
+                            # Send DONE marker to frontend immediately via LiveKit
+                            await self.publish_frontend_stream_livekit("DONE", "")
                             break
 
                         try:
@@ -372,7 +403,11 @@ class ASR_LLM_Manager:
                             content = data_obj["choices"][0]["delta"].get("content")
                             if content:
                                 current_response += content
-                                # Process and print each segment immediately
+                                
+                                # Send delta content to frontend immediately via LiveKit
+                                await self.publish_frontend_stream_livekit("CONTENT", content)
+                                
+                                # Process and print each segment immediately for TTS
                                 segments = self.text_chunk_spliter.process_chunk(
                                     content
                                 )
@@ -393,6 +428,9 @@ class ASR_LLM_Manager:
                         self.user_interrupting_flag = False
                         print("\n[INTERRUPTED]")
                         await self.publish_text_livekit("[INTERRUPTED]")
+                        
+                        # Send INTERRUPTED marker to frontend immediately via LiveKit
+                        await self.publish_frontend_stream_livekit("INTERRUPTED", "")
                         break
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
