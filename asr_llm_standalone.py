@@ -479,8 +479,4 @@ class ASR_LLM_Manager:
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
         
-        # Calculate total serve time
-        if self.timing["llm_first_token_time"] != -1 and self.timing["speech_end_time"] != -1:
-            self.current_usage["session_time"] = int(self.timing["llm_first_token_time"] - self.timing["speech_end_time"])
-        
         return self.current_usage["total_tokens"]  # Return the total tokens for backward compatibility
