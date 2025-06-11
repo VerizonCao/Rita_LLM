@@ -24,11 +24,13 @@ Example usage:
 from .database import DatabaseManager
 from .message import ChatMessage, UserMessage, AssistantMessage
 from .chat_session import ChatSessionManager
+from .play_session import PlaySessionManager
 
 __all__ = [
     'ChatSessionManager',
     'ChatMessage',
     'UserMessage',
     'AssistantMessage',
-    'DatabaseManager'
+    'DatabaseManager',
+    'PlaySessionManager'
 ] 

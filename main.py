@@ -280,20 +280,48 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                         "avatar_id": state.current_avatar_id or "unknown",
                         "user_id": state.current_user_id or "unknown"
                     })
-                    
-                    # Report total token usage if available
-                    has_audio_capture = state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture
-                    has_event_handler = has_audio_capture and state.audio_capture_wrapper.audio_capture.event_handler
-                    has_llm_manager = has_event_handler and state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager
-                    has_token_usage = has_llm_manager and state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.total_token_usage > 0
-                    
-                    if has_token_usage:
-                        total_tokens = state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.total_token_usage
-                        print(f"going to report total token usage: {total_tokens}, avatar_id: {state.current_avatar_id}, user_id: {state.current_user_id}")
-                        metrics["token_usage_counter"].add(total_tokens, {
-                            "avatar_id": state.current_avatar_id or "unknown",
-                            "user_id": state.current_user_id or "unknown"
-                        })
+
+                    # here, let's create the play session and save into db
+                    try:
+                        from data import PlaySessionManager
+                        session_manager = PlaySessionManager()
+                        
+                        # Get usage information from LLM manager
+                        has_audio_capture = state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture
+                        has_event_handler = has_audio_capture and state.audio_capture_wrapper.audio_capture.event_handler
+                        has_llm_manager = has_event_handler and state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager
+                        
+                        usage = None
+                        if has_llm_manager:
+                            usage = state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.current_usage
+                            # Add serve_time to usage information
+                            usage["session_time"] = serve_time
+                            
+                            # Report total tokens to metrics
+                            if usage["total_tokens"] > 0:
+                                print(f"going to report total token usage: {usage['total_tokens']}, avatar_id: {state.current_avatar_id}, user_id: {state.current_user_id}")
+                                metrics["token_usage_counter"].add(usage["total_tokens"], {
+                                    "avatar_id": state.current_avatar_id or "unknown",
+                                    "user_id": state.current_user_id or "unknown"
+                                })
+                        
+                        # Create new play session with usage information
+                        session_id = session_manager.create_session(
+                            user_id=state.current_user_id or "unknown",
+                            avatar_id=state.current_avatar_id or "unknown",
+                            usage=usage
+                        )
+                        
+                        if session_id:
+                            print(f"Created play session {session_id} with metrics:")
+                            if usage:
+                                print(f"- Total tokens: {usage['total_tokens']}")
+                                print(f"- Prompt tokens: {usage['prompt_tokens']}")
+                                print(f"- Completion tokens: {usage['completion_tokens']}")
+                                print(f"- Cost: {usage['cost']}")
+                                print(f"- Session time: {usage['session_time']}")
+                    except Exception as e:
+                        print(f"Error creating play session: {e}")
                     
                     # Force immediate export of metrics and shutdown telemetry
                     if "provider" in metrics:
