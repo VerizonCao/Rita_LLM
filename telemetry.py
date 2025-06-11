@@ -105,6 +105,12 @@ def setup_telemetry(service_name: str = "rita-llm"):
             unit="s"
         )
         
+        token_usage_counter = meter.create_counter(
+            name="total_token_usage",
+            description="Total number of tokens used (input + output)",
+            unit="1"
+        )
+        
         connection_state_counter = meter.create_up_down_counter(
             name="connection_state",
             description="Current connection state",
@@ -117,6 +123,7 @@ def setup_telemetry(service_name: str = "rita-llm"):
             "request_counter": request_counter,
             "avatar_request_counter": avatar_request_counter,
             "avatar_serve_time": avatar_serve_time,
+            "token_usage_counter": token_usage_counter,
             "connection_state_counter": connection_state_counter,
             "provider": provider  # Return the provider for shutdown
         }
