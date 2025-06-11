@@ -281,6 +281,20 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                         "user_id": state.current_user_id or "unknown"
                     })
                     
+                    # Report total token usage if available
+                    has_audio_capture = state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture
+                    has_event_handler = has_audio_capture and state.audio_capture_wrapper.audio_capture.event_handler
+                    has_llm_manager = has_event_handler and state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager
+                    has_token_usage = has_llm_manager and state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.total_token_usage > 0
+                    
+                    if has_token_usage:
+                        total_tokens = state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.total_token_usage
+                        print(f"going to report total token usage: {total_tokens}, avatar_id: {state.current_avatar_id}, user_id: {state.current_user_id}")
+                        metrics["token_usage_counter"].add(total_tokens, {
+                            "avatar_id": state.current_avatar_id or "unknown",
+                            "user_id": state.current_user_id or "unknown"
+                        })
+                    
                     # Force immediate export of metrics and shutdown telemetry
                     if "provider" in metrics:
                         metrics["provider"].force_flush()

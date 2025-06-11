@@ -49,6 +49,9 @@ class ASR_LLM_Manager:
         self.text_stream_writer: TextStreamWriter | None = None  # Add type hint for text stream writer
         self._is_shutting_down = False  # Add shutdown flag
 
+        # Token usage tracking
+        self.total_token_usage = 0
+
         # OpenRouter configuration
         self.openrouter_url = "https://openrouter.ai/api/v1/chat/completions"
         self.openrouter_headers = {
@@ -296,6 +299,7 @@ class ASR_LLM_Manager:
         first_llm_token_received = False
         buffer = ""
         current_response = ""
+        current_token_usage = 0  # Track tokens for this interaction
 
         # Add user message to self.messages (single source of truth)
         self.messages.append({"role": "user", "content": text})
@@ -316,6 +320,9 @@ class ASR_LLM_Manager:
             "messages": self.messages,
             "stream": True,
             "provider": {"sort": "latency"},
+            "usage": {
+                "include": True
+            }
         }
 
         # Print system prompt and messages for debugging
@@ -400,6 +407,15 @@ class ASR_LLM_Manager:
 
                         try:
                             data_obj = json.loads(data)
+                            
+                            # Check for usage information
+                            if "usage" in data_obj:
+                                usage = data_obj["usage"]
+                                current_token_usage = usage.get("total_tokens", 0)
+                                logger.info(f"Token usage - Prompt: {usage.get('prompt_tokens', 0)}, "
+                                          f"Completion: {usage.get('completion_tokens', 0)}, "
+                                          f"Total: {current_token_usage}")
+                            
                             content = data_obj["choices"][0]["delta"].get("content")
                             if content:
                                 current_response += content
@@ -434,3 +450,7 @@ class ASR_LLM_Manager:
                         break
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
+        
+        # Update total token usage
+        self.total_token_usage += current_token_usage
+        return self.total_token_usage  # Return the updated total token usage
