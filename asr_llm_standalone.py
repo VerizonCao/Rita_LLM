@@ -312,7 +312,7 @@ class ASR_LLM_Manager:
             logger.error(f"Failed to save user message to database: {e}")
 
         payload = {
-            "model": "deepseek/deepseek-chat-v3-0324",
+            "model": "google/gemini-2.5-flash-preview-05-20",
             "messages": self.messages,
             "stream": True,
             "provider": {"sort": "latency"},
@@ -386,7 +386,7 @@ class ASR_LLM_Manager:
                                     avatar_id=self.avatar_id,
                                     content=current_response,
                                     assistant_name=self.assistant_nickname or "Assistant",
-                                    model="deepseek/deepseek-chat-v3-0324"
+                                    model="google/gemini-2.5-flash-preview-05-20"
                                 )
                             except Exception as e:
                                 logger.error(f"Failed to save LLM response to database: {e}")
