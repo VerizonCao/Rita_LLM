@@ -401,9 +401,6 @@ class ASR_LLM_Manager:
                             except Exception as e:
                                 logger.error(f"Failed to save LLM response to database: {e}")
                             
-                            # Send stream end
-                            await self.publish_text_livekit("[DONE]")
-                            
                             # Send DONE marker to frontend immediately via LiveKit
                             await self.publish_frontend_stream_livekit("DONE", "")
                             break
@@ -448,6 +445,8 @@ class ASR_LLM_Manager:
                                                 for segment in remaining_segments:
                                                     logger.info(f"clearing tts buffer in narrative mode: {segment}")
                                                     await self.publish_text_livekit(segment)
+                                        # Send stream end
+                                        await self.publish_text_livekit("[DONE]")
                                         track_asterisk_index += 2
                                     elif not is_on_narrative:
                                         segments = self.text_chunk_spliter.process_chunk(checking_char)
