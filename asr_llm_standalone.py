@@ -297,9 +297,12 @@ class ASR_LLM_Manager:
         """
         self.user_interrupting_flag = False
         first_llm_token_received = False
-        buffer = ""
         current_response = ""
         current_token_usage = 0  # Track tokens for this interaction
+        # State tracking for narrative detection
+        is_on_narrative = False    # True when inside ** narrative **
+        past_double_asterisk_count = 0
+        track_asterisk_index = 0
 
         # Add user message to self.messages (single source of truth)
         self.messages.append({"role": "user", "content": text})
@@ -360,19 +363,14 @@ class ASR_LLM_Manager:
                             logger.info(
                                 f"Time from whisper end to LLM first token: {self.timing['llm_first_token_time'] - self.timing['whisper_end_time']:.2f} seconds"
                             )
-                        # Send timing information after first token
-                        # await self.publish_text_livekit(f"[speech_end_time]: {self.timing['speech_end_time']}")
-                        # await self.publish_text_livekit(f"[llm_first_token_time]: {self.timing['llm_first_token_time']}")
-
                     if line.startswith("data: "):
                         data = line[6:]
                         if data == "[DONE]":
-                            # Process any remaining buffer content
+                            # Process any remaining tts buffer content
                             remaining_segments = (
                                 self.text_chunk_spliter.get_remaining_buffer()
                             )
                             for segment in remaining_segments:
-                                print("sending segment in final: ", segment, '\n', flush=True)
                                 logger.info(f"sending segment in final: {segment} \n")
                                 await self.publish_text_livekit(segment)
                                 
@@ -423,14 +421,33 @@ class ASR_LLM_Manager:
                                 # Send delta content to frontend immediately via LiveKit
                                 await self.publish_frontend_stream_livekit("CONTENT", content)
                                 
-                                # Process and print each segment immediately for TTS
-                                segments = self.text_chunk_spliter.process_chunk(
-                                    content
-                                )
-                                for segment in segments:
-                                    print("sending segment: ", segment, '\n', flush=True)
-                                    logger.info(f"sending segment: {segment} \n")
-                                    await self.publish_text_livekit(segment)
+                                # Track double asterisks for narrative detection
+                                while track_asterisk_index + 1 < len(current_response):
+                                    checking_str = current_response[track_asterisk_index : track_asterisk_index + 2]
+                                    checking_char = current_response[track_asterisk_index]
+                                    if checking_str == '**':
+                                        past_double_asterisk_count += 1
+                                        is_on_narrative = (past_double_asterisk_count % 2 == 1)
+                                        if is_on_narrative:
+                                            # We're in narrative mode, Process any remaining tts buffer content
+                                            if len(self.text_chunk_spliter.buffer) > 0:
+                                                remaining_segments = (
+                                                    self.text_chunk_spliter.get_remaining_buffer()
+                                                )
+                                                for segment in remaining_segments:
+                                                    logger.info(f"clearing tts buffer in narrative mode: {segment}")
+                                                    await self.publish_text_livekit(segment)
+                                        track_asterisk_index += 2
+                                    elif not is_on_narrative:
+                                        segments = self.text_chunk_spliter.process_chunk(checking_char)
+                                        for segment in segments:
+                                            logger.info(f"sending segment: {segment}")
+                                            await self.publish_text_livekit(segment)
+                                        
+                                        track_asterisk_index += 1
+                                    else:
+                                        # on narrative, keep moving forward
+                                        track_asterisk_index += 1
 
                         except json.JSONDecodeError:
                             logger.warning(f"Could not decode JSON data: {data}")
