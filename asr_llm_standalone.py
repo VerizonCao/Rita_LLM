@@ -50,7 +50,12 @@ class ASR_LLM_Manager:
         self._is_shutting_down = False  # Add shutdown flag
 
         # Token usage tracking
-        self.total_token_usage = 0
+        self.current_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost": 0
+        }
 
         # OpenRouter configuration
         self.openrouter_url = "https://openrouter.ai/api/v1/chat/completions"
@@ -409,10 +414,16 @@ class ASR_LLM_Manager:
                             # Check for usage information
                             if "usage" in data_obj:
                                 usage = data_obj["usage"]
-                                current_token_usage = usage.get("total_tokens", 0)
-                                logger.info(f"Token usage - Prompt: {usage.get('prompt_tokens', 0)}, "
-                                          f"Completion: {usage.get('completion_tokens', 0)}, "
-                                          f"Total: {current_token_usage}")
+                                # Accumulate all usage values
+                                self.current_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                                self.current_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+                                self.current_usage["total_tokens"] += usage.get("total_tokens", 0)
+                                self.current_usage["cost"] += usage.get("cost", 0)
+                                
+                                logger.info(f"Token usage - Prompt: {self.current_usage['prompt_tokens']}, "
+                                          f"Completion: {self.current_usage['completion_tokens']}, "
+                                          f"Total: {self.current_usage['total_tokens']}, "
+                                          f"Cost: {self.current_usage['cost']}")
                             
                             content = data_obj["choices"][0]["delta"].get("content")
                             if content:
@@ -468,6 +479,4 @@ class ASR_LLM_Manager:
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
         
-        # Update total token usage
-        self.total_token_usage += current_token_usage
-        return self.total_token_usage  # Return the updated total token usage
+        return self.current_usage["total_tokens"]  # Return the total tokens for backward compatibility
