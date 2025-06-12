@@ -155,6 +155,10 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
     @room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
         logging.info(f"participant disconnected: {participant.sid} {participant.identity}")
+        # Check if the disconnected participant has the role "avatar-agent"
+        if participant.attributes and participant.attributes.get("role") == "agent-avatar":
+            state.user_left = True
+            logging.info("Avatar agent disconnected, marking user_left as True")
 
     @room.on("track_subscribed")
     def on_track_subscribed(
@@ -347,7 +351,8 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                 if has_valid_participant and not state.serve_start_time:
                     state.serve_start_time = time.time()
 
-                if not has_valid_participant or room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
+                # if not has_valid_participant or room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
+                if room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
                     user_left_loop_count += 1
                     print(f"user not in room or room disconnected count + 1, total {user_left_loop_count}")
                     if user_left_loop_count > user_left_confirm_number:
