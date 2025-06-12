@@ -12,6 +12,7 @@ from livekit import rtc  # Add LiveKit import
 from livekit.rtc import TextStreamWriter  # Add TextStreamWriter import
 import asyncio
 from dotenv import load_dotenv
+from typing import Optional
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -130,9 +131,53 @@ class ASR_LLM_Manager:
             if history:
                 self.messages.extend(history)
                 logger.info(f"Loaded {len(history)} messages from conversation history")
+            else:
+                # No history exists, try to load opening_prompt from avatars table
+                opening_prompt = self._get_opening_prompt()
+                if opening_prompt:
+                    # Add opening prompt as first assistant message
+                    opening_message = {"role": "assistant", "content": opening_prompt}
+                    self.messages.append(opening_message)
+                    
+                    # Save opening prompt to database as first assistant message
+                    try:
+                        self.chat_session_manager.write_assistant_message(
+                            user_id=self.user_id,
+                            avatar_id=self.avatar_id,
+                            content=opening_prompt,
+                            assistant_name=self.assistant_nickname or "Assistant",
+                            model="opening_prompt"  # Special model name to indicate this is an opening
+                        )
+                        logger.info(f"Added opening prompt as first assistant message")
+                    except Exception as e:
+                        logger.error(f"Failed to save opening prompt to database: {e}")
             
         except Exception as e:
             logger.error(f"Failed to load conversation history: {e}")
+
+    def _get_opening_prompt(self) -> Optional[str]:
+        """Get opening_prompt from avatars table for this avatar"""
+        try:
+            # Use the database manager from chat session manager
+            if not self.chat_session_manager.db_manager.ensure_connection():
+                logger.error("Failed to establish database connection for opening prompt")
+                return None
+            
+            query = "SELECT opening_prompt FROM avatars WHERE avatar_id = %s"
+            result = self.chat_session_manager.db_manager.execute_query(query, (self.avatar_id,))
+            
+            if result and len(result) > 0:
+                opening_prompt = result[0].get('opening_prompt')
+                if opening_prompt and opening_prompt.strip():
+                    logger.info(f"Retrieved opening prompt for avatar {self.avatar_id}")
+                    return opening_prompt.strip()
+            
+            logger.info(f"No opening prompt found for avatar {self.avatar_id}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get opening prompt: {e}")
+            return None
 
     def speech_to_text(self, audio_file_path, speech_end_time):
         """Convert speech to text using Whisper API"""
