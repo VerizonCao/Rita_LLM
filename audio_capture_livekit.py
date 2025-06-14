@@ -7,6 +7,8 @@ import pyaudio
 import numpy as np
 import asyncio
 import threading
+import time
+import os
 
 from vad import VoiceActivityDetector, SileroVoiceActivityDetector
 from livekit import rtc
@@ -101,12 +103,12 @@ class AudioCaptureLiveKit:
         self.frames_per_buffer = frames_per_buffer
         self.cross_fade_duration_ms = cross_fade_duration_ms
         self.enable_wave_capture = enable_wave_capture
+        self.wave_file = None
+        self.wave_filename = None
 
         self.vad = None
         self.speech_started = False
 
-        self.wave_file = None
-        # self.pyaudio_instance = pyaudio.PyAudio()
         self.audio_task = None
         self.stream = None
 
@@ -157,16 +159,19 @@ class AudioCaptureLiveKit:
 
         if self.enable_wave_capture:
             try:
-                self.wave_file = wave.open("microphone_output.wav", "wb")
+                # Use a unique filename with timestamp
+                timestamp = int(time.time())
+                self.wave_filename = f"microphone_output_{timestamp}.wav"
+                self.wave_file = wave.open(self.wave_filename, "wb")
                 self.wave_file.setnchannels(self.channels) 
-                self.wave_file.setsampwidth(
-                    self.pyaudio_instance.get_sample_size(FORMAT)
-                )
+                self.wave_file.setsampwidth(2)  # 16-bit audio
                 self.wave_file.setframerate(self.sample_rate)
-                logger.info("Wave file initialized for capture.")
+                logger.info(f"Wave file initialized for capture: {self.wave_filename}")
             except Exception as e:
                 logger.error(f"Error opening wave file: {e}")
                 self.enable_wave_capture = False
+                self.wave_file = None
+                self.wave_filename = None
 
         if self.keyword_recognizer:
             try:
@@ -175,24 +180,10 @@ class AudioCaptureLiveKit:
             except Exception as e:
                 logger.error(f"Failed to start AzureKeywordRecognizer: {e}")
 
-        # Ensure the PyAudio instance is initialized
-        # if not self.pyaudio_instance:
-        #     self.pyaudio_instance = pyaudio.PyAudio()
-
         try:
-            # self.stream = self.pyaudio_instance.open(
-            #     format=FORMAT,
-            #     channels=self.channels,
-            #     rate=self.sample_rate,
-            #     input=True,
-            #     frames_per_buffer=self.frames_per_buffer,
-            #     stream_callback=self.handle_input_audio
-            # )
-            # self.stream.start_stream()
             self.is_running = True
             loop = asyncio.new_event_loop()
             self.audio_task = loop.create_task(self._process_audio())
-            # self.audio_task = asyncio.create_task(self._process_audio())  # Start async audio processing
             logger.info("Audio stream started.")
             print("before the loop run forever !!")
             try:
@@ -218,10 +209,6 @@ class AudioCaptureLiveKit:
             return
 
         try:
-            # if self.stream is not None:
-            #     self.stream.stop_stream()
-            #     self.stream.close()
-            #     logger.info("Audio stream stopped and closed.")
             if self.audio_task:
                 self.audio_task.cancel()
                 logger.info("Audio processing task canceled.")
@@ -238,16 +225,16 @@ class AudioCaptureLiveKit:
         if self.enable_wave_capture and self.wave_file:
             try:
                 self.wave_file.close()
-                logger.info("Wave file saved successfully.")
+                logger.info(f"Wave file saved successfully: {self.wave_filename}")
+                # Clean up the wave file
+                if self.wave_filename and os.path.exists(self.wave_filename):
+                    os.remove(self.wave_filename)
+                    logger.info(f"Removed wave file: {self.wave_filename}")
             except Exception as e:
                 logger.error(f"Error closing wave file: {e}")
-
-        # try:
-            # if self.pyaudio_instance is not None and terminate:
-            #     self.pyaudio_instance.terminate()
-            #     logger.info("PyAudio terminated.")
-        # except Exception as e:
-        #     logger.error(f"Error terminating PyAudio: {e}")
+            finally:
+                self.wave_file = None
+                self.wave_filename = None
 
         self.is_running = False
         logger.info("AudioCapture has been stopped.")
