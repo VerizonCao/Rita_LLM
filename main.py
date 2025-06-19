@@ -12,6 +12,7 @@ from livekit import rtc, api
 import argparse
 import json
 import shutil
+import aiohttp
 
 from alive_inference_status import ALRealtimeIOAndStatus
 from alive_inference_config import AliveInferenceConfig
@@ -263,6 +264,9 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
     )
 
     print("room connected!")
+    
+    # Send Discord webhook notification
+    await send_discord_webhook(room_name, state.current_user_id, state.current_avatar_id)
 
     # local test logic. comment me in production
     # state.serve_start_time = time.time()
@@ -276,6 +280,10 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
         try:
             if state.user_left:
                 print("user left the room")
+                
+                # Send Discord webhook notification for user leaving
+                await send_discord_webhook(room_name, state.current_user_id, state.current_avatar_id, "leaving")
+                
                 # Report final serve time when user leaves
                 if state.serve_start_time:
                     serve_time = round(time.time() - state.serve_start_time)
@@ -586,6 +594,55 @@ def handler(event, context):
                 "error": str(e)
             })
         }
+
+async def send_discord_webhook(room_name: str, user_id: str = None, avatar_id: str = None, message_type: str = "joining"):
+    """
+    Send a Discord webhook notification when a user joins or leaves a room
+    
+    Args:
+        room_name: Name of the room
+        user_id: User ID (optional)
+        avatar_id: Avatar ID (optional)
+        message_type: Type of message - "joining" or "leaving"
+    """
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        print("DISCORD_WEBHOOK_URL not found in environment variables")
+        return
+    
+    try:
+        # Prepare the message
+        user_info = ""
+        if user_id and avatar_id:
+            user_info = f" (User: {user_id}, Avatar: {avatar_id})"
+        elif user_id:
+            user_info = f" (User: {user_id})"
+        elif avatar_id:
+            user_info = f" (Avatar: {avatar_id})"
+        
+        action = "joining" if message_type == "joining" else "leaving"
+        # Add emojis for better visibility
+        if message_type == "joining":
+            emoji_prefix = "🟢🚪"
+        else:  # leaving
+            emoji_prefix = "🔴🚪"
+        
+        message = f"{emoji_prefix} Rita:LLM: user is {action} the room: {room_name}{user_info}"
+        
+        # Prepare the webhook payload
+        payload = {
+            "content": message
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(webhook_url, json=payload) as response:
+                if response.status == 204:
+                    print(f"Discord webhook sent successfully: {message}")
+                else:
+                    print(f"Failed to send Discord webhook. Status: {response.status}")
+                    
+    except Exception as e:
+        print(f"Error sending Discord webhook: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start the room connection with a specified room name')
