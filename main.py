@@ -395,6 +395,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                             # )
                     except Exception as e:
                         print(f"Error sending message: {e}")
+                        time.sleep(0.2)
                         continue
 
                 state.agent_message_count += 1
@@ -436,6 +437,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                     
                 except Exception as e:
                     print(f"Error sending transcription: {e}")
+                    time.sleep(0.2)
                     continue
 
             await asyncio.sleep(0.1)  # Small delay to prevent CPU overuse
