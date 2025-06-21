@@ -276,6 +276,10 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
     user_left_loop_count = 0
     user_left_confirm_number = 2  # roughly 2s
 
+    # for debug why user is not enter the room.
+    user_not_enter_loop_count = 0
+    user_not_enter_log_number = 500
+
     while True:
         try:
             if state.user_left:
@@ -380,10 +384,14 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                 if message.get("role") == "assistant":
                     try:
                         if not room.remote_participants:
-                            print("No remote participants available to send message to")
-                            # add a 0.2 sec interval to prevent log overload. 
-                            time.sleep(0.2)
-                            continue
+                            user_not_enter_loop_count += 1
+                            if user_not_enter_loop_count == user_not_enter_log_number:
+                                # Send webhook notification for user not entering the room
+                                await send_user_not_entered_webhook(room_name, state.current_user_id, state.current_avatar_id, user_not_enter_loop_count)
+
+                        #     # add a 0.2 sec interval to prevent log overload. 
+                        #     time.sleep(0.2)
+                        #     continue
                             
                         response_content = message["content"]
                         if len(response_content) > 0:
@@ -410,7 +418,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                 and state.audio_capture_wrapper.audio_capture 
                 and state.audio_capture_wrapper.audio_capture.event_handler
                 and len(state.audio_capture_wrapper.audio_capture.event_handler.text_input_voice) > state.voice_transcription_count
-                and room.remote_participants
+                # and room.remote_participants
             ):
                 try:
                     # Get the next transcription to send
@@ -647,6 +655,51 @@ async def send_discord_webhook(room_name: str, user_id: str = None, avatar_id: s
                     
     except Exception as e:
         print(f"Error sending Discord webhook: {e}")
+
+async def send_user_not_entered_webhook(room_name: str, user_id: str = None, avatar_id: str = None, loop_count: int = 0):
+    """
+    Send a Discord webhook notification when a user doesn't enter the room after multiple attempts
+    
+    Args:
+        room_name: Name of the room
+        user_id: User ID (optional)
+        avatar_id: Avatar ID (optional)
+        loop_count: Number of loops without remote participants
+    """
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        print("DISCORD_WEBHOOK_URL not found in environment variables")
+        return
+    
+    try:
+        # Prepare the message
+        user_info = ""
+        if user_id and avatar_id:
+            user_info = f" (User: {user_id}, Avatar: {avatar_id})"
+        elif user_id:
+            user_info = f" (User: {user_id})"
+        elif avatar_id:
+            user_info = f" (Avatar: {avatar_id})"
+        
+        # Add emojis for better visibility
+        emoji_prefix = "⚠️🚪"
+        
+        message = f"{emoji_prefix} Rita:LLM: No remote participants available in room: {room_name}{user_info} (Loop count: {loop_count})"
+        
+        # Prepare the webhook payload
+        payload = {
+            "content": message
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(webhook_url, json=payload) as response:
+                if response.status == 204:
+                    print(f"User not entered webhook sent successfully: {message}")
+                else:
+                    print(f"Failed to send user not entered webhook. Status: {response.status}")
+                    
+    except Exception as e:
+        print(f"Error sending user not entered webhook: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start the room connection with a specified room name')
