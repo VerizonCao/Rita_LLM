@@ -381,6 +381,8 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                     try:
                         if not room.remote_participants:
                             print("No remote participants available to send message to")
+                            # add a 0.2 sec interval to prevent log overload. 
+                            time.sleep(0.2)
                             continue
                             
                         response_content = message["content"]
