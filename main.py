@@ -635,9 +635,9 @@ async def send_discord_webhook(room_name: str, user_id: str = None, avatar_id: s
         action = "joining" if message_type == "joining" else "leaving"
         # Add emojis for better visibility
         if message_type == "joining":
-            emoji_prefix = "🟢🚪"
+            emoji_prefix = "🟢🤖"
         else:  # leaving
-            emoji_prefix = "🔴🚪"
+            emoji_prefix = "🔴🤖"
         
         message = f"{emoji_prefix} Rita:LLM: user is {action} the room: {room_name}{user_info}"
         
@@ -682,7 +682,7 @@ async def send_user_not_entered_webhook(room_name: str, user_id: str = None, ava
             user_info = f" (Avatar: {avatar_id})"
         
         # Add emojis for better visibility
-        emoji_prefix = "⚠️🚪"
+        emoji_prefix = "⚠️🤖"
         
         message = f"{emoji_prefix} Rita:LLM: No remote participants available in room: {room_name}{user_info} (Loop count: {loop_count})"
         
