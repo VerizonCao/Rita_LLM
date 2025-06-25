@@ -334,6 +334,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None):
                                 print(f"- Total tokens: {usage['total_tokens']}")
                                 print(f"- Prompt tokens: {usage['prompt_tokens']}")
                                 print(f"- Completion tokens: {usage['completion_tokens']}")
+                                print(f"- TTS tokens: {usage.get('tts_tokens', 0)}")
                                 print(f"- Cost: {usage['cost']}")
                                 print(f"- Session time: {usage['session_time']}")
                     except Exception as e:

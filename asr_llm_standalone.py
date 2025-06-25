@@ -55,7 +55,8 @@ class ASR_LLM_Manager:
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
-            "cost": 0
+            "cost": 0,
+            "tts_tokens": 0  # Track tokens for TTS (dialogue only, excluding narrative)
         }
 
         # OpenRouter configuration
@@ -339,6 +340,74 @@ class ASR_LLM_Manager:
         
         return formatted_result
 
+    def calculate_tts_tokens(self, response_text: str, completion_tokens: int) -> int:
+        """
+        Calculate TTS tokens by separating dialogue from narrative content.
+        TTS tokens = completion_tokens * (dialogue_length / total_length)
+        
+        Args:
+            response_text: The complete response text
+            completion_tokens: Total completion tokens from the LLM
+            
+        Returns:
+            int: Estimated TTS tokens (dialogue only)
+        """
+        if not response_text or completion_tokens <= 0:
+            return 0
+        
+        # Find all narrative sections (content between ** **)
+        dialogue_parts = []
+        narrative_parts = []
+        
+        # Split the text by ** markers
+        parts = response_text.split('**')
+        
+        for i, part in enumerate(parts):
+            if i % 2 == 0:  # Even indices are dialogue (outside **)
+                if part.strip():
+                    dialogue_parts.append(part.strip())
+            else:  # Odd indices are narrative (inside **)
+                if part.strip():
+                    narrative_parts.append(part.strip())
+        
+        # Calculate total dialogue and narrative lengths
+        dialogue_length = sum(len(part) for part in dialogue_parts)
+        narrative_length = sum(len(part) for part in narrative_parts)
+        total_length = dialogue_length + narrative_length
+        
+        if total_length == 0:
+            return 0
+        
+        # Calculate TTS tokens proportionally
+        dialogue_ratio = dialogue_length / total_length
+        tts_tokens = int(completion_tokens * dialogue_ratio)
+        
+        logger.info(f"TTS token calculation - Dialogue: {dialogue_length} chars, "
+                   f"Narrative: {narrative_length} chars, "
+                   f"Total: {total_length} chars, "
+                   f"Ratio: {dialogue_ratio:.3f}, "
+                   f"TTS tokens: {tts_tokens}")
+        
+        return tts_tokens
+
+    def get_tts_tokens(self) -> int:
+        """
+        Get the current TTS token usage (dialogue only, excluding narrative).
+        
+        Returns:
+            int: Current TTS token count
+        """
+        return self.current_usage.get("tts_tokens", 0)
+
+    def get_token_usage(self) -> dict:
+        """
+        Get the complete token usage information.
+        
+        Returns:
+            dict: Complete token usage including prompt, completion, total, TTS, and cost
+        """
+        return self.current_usage.copy()
+
     async def send_to_openrouter(self, text):
         """
         1. receives text from ASR or user input.
@@ -426,6 +495,10 @@ class ASR_LLM_Manager:
                                 
                             # final response format check
                             current_response = self.final_response_format_check(current_response)
+
+                            # Calculate TTS tokens (dialogue only, excluding narrative)
+                            tts_tokens = self.calculate_tts_tokens(current_response, self.current_usage["completion_tokens"])
+                            self.current_usage["tts_tokens"] += tts_tokens
 
                             # Add assistant message to self.messages (single source of truth)
                             self.messages.append(

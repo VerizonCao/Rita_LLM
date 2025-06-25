@@ -28,6 +28,7 @@ class PlaySessionManager:
                 - prompt_tokens: int (nullable)
                 - completion_tokens: int (nullable)
                 - total_tokens: int (nullable)
+                - tts_tokens: int (nullable)
                 - cost: int (nullable)
                 - session_time: int (defaults to 0)
             
@@ -38,10 +39,10 @@ class PlaySessionManager:
             query = """
                 INSERT INTO play_sessions (
                     user_id, avatar_id,
-                    prompt_tokens, completion_tokens, total_tokens, cost,
+                    prompt_tokens, completion_tokens, total_tokens, tts_tokens, cost,
                     session_time
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING session_id
             """
             params = (
@@ -49,6 +50,7 @@ class PlaySessionManager:
                 usage.get('prompt_tokens'),
                 usage.get('completion_tokens'),
                 usage.get('total_tokens'),
+                usage.get('tts_tokens'),
                 usage.get('cost'),
                 usage.get('session_time', 0)  # Default to 0 if not provided
             )
@@ -93,7 +95,7 @@ class PlaySessionManager:
         return result is not None and result[0]['affected_rows'] > 0
     
     def update_token_usage(self, session_id: str, prompt_tokens: int, 
-                          completion_tokens: int, cost: int) -> bool:
+                          completion_tokens: int, cost: int, tts_tokens: int = None) -> bool:
         """
         Update token usage and cost for a session.
         
@@ -102,6 +104,7 @@ class PlaySessionManager:
             prompt_tokens: Number of prompt tokens used
             completion_tokens: Number of completion tokens used
             cost: Cost in smallest currency unit (e.g., cents)
+            tts_tokens: Number of TTS tokens used (dialogue only, optional)
             
         Returns:
             True if successful, False otherwise
@@ -111,18 +114,21 @@ class PlaySessionManager:
             SET prompt_tokens = COALESCE(prompt_tokens, 0) + %s,
                 completion_tokens = COALESCE(completion_tokens, 0) + %s,
                 total_tokens = COALESCE(total_tokens, 0) + %s,
+                tts_tokens = COALESCE(tts_tokens, 0) + %s,
                 cost = COALESCE(cost, 0) + %s,
                 update_time = now()
             WHERE session_id = %s
         """
         
         total_tokens = prompt_tokens + completion_tokens
+        tts_tokens_value = tts_tokens if tts_tokens is not None else 0
+        
+        params = (prompt_tokens, completion_tokens, total_tokens, tts_tokens_value, cost, session_id)
         
         if not self.db.ensure_connection():
             return False
             
-        result = self.db.execute_query(query, 
-            (prompt_tokens, completion_tokens, total_tokens, cost, session_id))
+        result = self.db.execute_query(query, params)
         return result is not None and result[0]['affected_rows'] > 0
     
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
