@@ -3,6 +3,31 @@ import requests
 import psycopg2
 from pathlib import Path
 
+# List of TTS prompts to cycle through
+TTS_PROMPTS = [
+    "There's always that one class, honestly, that you'd love to skip forever.",
+    "Sometimes, I think bosses should try doing our jobs, just for one day.",
+    "First dates get weird when someone orders the strangest thing on the menu.",
+    "It would be amazing, suddenly, to wake up with incredible artistic talent.",
+    "In the future, robots will probably cook everything, and I'm here for it.",
+    "Living in the 1800s might be cool, but I'd definitely need my phone.",
+    "Your phone contacts say a lot, honestly, about who really matters.",
+    "Ten-minute shopping sprees sound stressful, but also kind of exciting.",
+    "Being famous for a week, then disappearing, actually sounds perfect.",
+    "Pets would probably complain about everything, if they could talk.",
+    "Teaching a class about something you love, honestly, sounds pretty fun.",
+    "Sending texts to the wrong person, especially parents, is pure nightmare fuel.",
+    "Redecorating with just one color, surprisingly, might look really cool.",
+    "Working at a bakery, with free treats, would be dangerous for me.",
+    "Meeting your future self, honestly, would be terrifying but fascinating.",
+    "Having your best friend as a neighbor, actually, sounds pretty great.",
+    "Mastering any sport instantly, even for a day, would be incredible.",
+    "Finding random cash, with no owner, creates such a moral dilemma.",
+    "Fifty dollars can go surprisingly far, if you're creative about it.",
+    "Being inside your favorite game, honestly, would be the ultimate escape."
+]
+
+
 def load_env_file(env_path: str = "Rita_LLM/.env.local"):
     """Load environment variables from .env.local file"""
     env_vars = {}
@@ -91,7 +116,7 @@ def extract_rita_voice_id_from_filename(filename: str) -> str:
         print(f"   ⚠️  Could not extract rita voice ID from: {filename}")
         return None
 
-def generate_tts_audio(cartesia_voice_id: str) -> bytes:
+def generate_tts_audio(cartesia_voice_id: str, transcript: str) -> bytes:
     """Generate TTS audio using Cartesia API"""
     env_vars = load_env_file()
     CARTESIA_API_KEY = env_vars.get("CARTESIA_API_KEY")
@@ -109,7 +134,7 @@ def generate_tts_audio(cartesia_voice_id: str) -> bytes:
     
     payload = {
         "model_id": "sonic-2",
-        "transcript": "This is what I would sound like.",
+        "transcript": transcript,
         "voice": {
             "mode": "id",
             "id": cartesia_voice_id
@@ -136,10 +161,13 @@ def generate_tts_audio(cartesia_voice_id: str) -> bytes:
         print(f"   ❌ TTS API error: {str(e)}")
         return None
 
-def process_audio_file(file_path: str, voice_mapping: dict) -> bool:
+def process_audio_file(file_path: str, voice_mapping: dict, voice_index: int) -> bool:
     """Process a single audio file: extract ID, generate new TTS, replace file"""
     filename = os.path.basename(file_path)
     voice_name = filename.split('_')[0]
+    
+    # Get the prompt for this voice using rolling index
+    prompt = TTS_PROMPTS[voice_index % len(TTS_PROMPTS)]
     
     print(f"\n🎤 Processing: {voice_name}")
     print(f"   📄 File: {filename}")
@@ -158,11 +186,11 @@ def process_audio_file(file_path: str, voice_mapping: dict) -> bool:
         return False
     
     print(f"   🎵 Cartesia Voice ID: {cartesia_voice_id}")
-    print(f"   💬 Text: This is what I would sound like.")
+    print(f"   💬 Text: {prompt}")
     
     # Generate new TTS audio
     print(f"   🔄 Generating TTS...")
-    audio_content = generate_tts_audio(cartesia_voice_id)
+    audio_content = generate_tts_audio(cartesia_voice_id, prompt)
     
     if not audio_content:
         print(f"   ❌ Failed to generate TTS")
@@ -214,7 +242,7 @@ def regenerate_voice_samples():
     for i, file_path in enumerate(audio_files, 1):
         print(f"\n[{i}/{len(audio_files)}] " + "=" * 30)
         
-        success = process_audio_file(file_path, voice_mapping)
+        success = process_audio_file(file_path, voice_mapping, i - 1)  # Use 0-based index for prompt selection
         
         if success:
             successful.append(os.path.basename(file_path))
