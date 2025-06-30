@@ -557,6 +557,7 @@ class ASR_LLM_Manager:
         current_token_usage = 0  # Track tokens for this interaction
         # State tracking for dialogue/narrative detection
         is_on_dialogue = False    # True when inside " dialogue "
+        is_tts_started = False
         past_quote_count = 0
         track_char_index = 0
         consecutive_narrative_chars = 0 
@@ -595,9 +596,6 @@ class ASR_LLM_Manager:
         #     print(f"Content: {msg['content']}")
         # print("\n=== End Message History ===\n")
 
-        # Send stream start at the beginning
-        await self.publish_tts_text("[START]")
-
         with requests.post(
             self.openrouter_url,
             headers=self.openrouter_headers,
@@ -629,6 +627,9 @@ class ASR_LLM_Manager:
                                 self.text_chunk_spliter.get_remaining_buffer()
                             )
                             for segment in remaining_segments:
+                                if not is_tts_started:
+                                    is_tts_started = True
+                                    await self.publish_tts_text("[START]")
                                 logger.info(f"sending segment in final: {segment} \n")
                                 await self.publish_tts_text(segment)
 
@@ -716,9 +717,14 @@ class ASR_LLM_Manager:
                                                 )
                                                 for segment in remaining_segments:
                                                     logger.info(f"clearing tts buffer when switching to narrative: {segment}")
+                                                    if not is_tts_started:
+                                                        is_tts_started = True
+                                                        await self.publish_tts_text("[START]")
                                                     await self.publish_tts_text(segment)
                                             # Reset narrative counter when exiting dialogue
                                             consecutive_narrative_chars = 0
+                                            is_tts_started = False
+                                            await self.publish_tts_text("[DONE]")
                                         
                                         # Don't send [DONE] when switching modes - only send it when LLM response is complete
                                         track_char_index += 1
@@ -727,7 +733,9 @@ class ASR_LLM_Manager:
                                         # We're in dialogue mode, send to TTS buffer
                                         segments = self.text_chunk_spliter.process_chunk(checking_char)
                                         for segment in segments:
-                                            logger.info(f"sending dialogue segment: {segment}")
+                                            if not is_tts_started:
+                                                is_tts_started = True
+                                                await self.publish_tts_text("[START]")
                                             await self.publish_tts_text(segment)
                                         
                                         track_char_index += 1
@@ -736,6 +744,9 @@ class ASR_LLM_Manager:
                                         # We're in narrative mode, count characters for timing
                                         consecutive_narrative_chars += 1
                                         track_char_index += 1
+                                        if is_tts_started:
+                                            is_tts_started = False
+                                            await self.publish_tts_text("[DONE]")
 
                         except json.JSONDecodeError:
                             logger.warning(f"Could not decode JSON data: {data}")
