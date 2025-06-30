@@ -46,6 +46,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.asr_llm_manager = ASR_LLM_Manager(
             llm_data=config.get_llm_tuple(),
             room=room,
+            loop=loop,
         )
         self.processing_thread = None
         self.stop_processing = threading.Event()
@@ -66,6 +67,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
             self.asr_llm_manager = ASR_LLM_Manager(
                 llm_data=self.config.get_llm_tuple(),
                 room=self.room,
+                loop=self.loop,
             )
 
     def interrupt_processing(self):

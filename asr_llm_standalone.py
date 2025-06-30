@@ -36,6 +36,7 @@ class ASR_LLM_Manager:
         self,
         llm_data: tuple = None,
         room: rtc.Room = None,  # Add type hint for LiveKit room
+        loop: asyncio.AbstractEventLoop = None,  # Add event loop parameter
     ):
         # Initialize Deepinfra client for Whisper ASR
         self.openai_client = OpenAI(
@@ -45,10 +46,15 @@ class ASR_LLM_Manager:
         if not self.openai_client.api_key:
             raise ValueError("DEEPINFRA_API_KEY environment variable is not set")
 
-        # Store room reference
+        # Store room reference and event loop
         self.room = room
+        self.loop = loop  # Store the event loop reference
         self.text_stream_writer: TextStreamWriter | None = None  # Add type hint for text stream writer
         self._is_shutting_down = False  # Add shutdown flag
+
+        # Text publishing queue for non-blocking operation
+        self.tts_text_queue = asyncio.Queue()
+        self.tts_text_publisher_task = None
 
         # Token usage tracking
         self.current_usage = {
@@ -117,6 +123,95 @@ class ASR_LLM_Manager:
             "llm_first_token_time": -1,
         }
         self.user_interrupting_flag = False
+        
+        # Schedule the async task on the proper event loop
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(self.start_tts_text_publisher(), self.loop)
+        else:
+            logger.warning("No event loop provided, TTS text publisher not started")
+
+    async def start_tts_text_publisher(self):
+        """Start the background text publisher task"""
+        if self.tts_text_publisher_task is None:
+            self.tts_text_publisher_task = asyncio.create_task(self._tts_text_publisher_worker())
+            print("Text publisher worker initialized")
+
+    async def _tts_text_publisher_worker(self):
+        """Background worker that processes text publishing queue"""
+        print("Text publisher worker thread started")
+        while not self._is_shutting_down:
+            try:
+                # Wait for text with short timeout to check shutdown flag
+                text = await asyncio.wait_for(self.tts_text_queue.get(), timeout=0.001)  # 1ms timeout
+                print(f"TTS Text Publisher: Processing text: {text}")
+                # Process the text based on type
+                if text.startswith("[SLEEP] "):
+                    # Handle sleep command
+                    try:
+                        parts = text.split(" ", 1)
+                        if len(parts) > 1:
+                            sleep_duration = float(parts[1])
+                            print(f"Sleeping for {sleep_duration} seconds")
+                            await asyncio.sleep(sleep_duration)
+                        else:
+                            logger.warning("Sleep command missing duration")
+                    except ValueError:
+                        logger.error(f"Invalid sleep duration in: {text}")
+                else:
+                    # Handle all other text (control flags and regular content)
+                    if self._is_shutting_down:
+                        logger.warning("Skipping text publish during shutdown")
+                    elif not self.room:
+                        logger.error("No LiveKit room available for publishing")
+                    else:
+                        try:
+                            if text == "[START]":
+                                logger.info("=== SENDING [START] MARKER ===")
+                                # Start a new text stream
+                                self.text_stream_writer = await self.room.local_participant.stream_text(
+                                    topic="llm_data"
+                                )
+                                # Send the [START] marker first
+                                await self.text_stream_writer.write("[START]")
+                                logger.info("=== [START] MARKER SENT AND STREAM INITIALIZED ===")
+                            
+                            elif text == "[DONE]" or text == "[INTERRUPTED]":
+                                if self.text_stream_writer:
+                                    await self.text_stream_writer.write(text)  # Send the marker before closing
+                                    await self.text_stream_writer.aclose()
+                                    logger.info(f"Closed text stream with marker: {text}")
+                                    self.text_stream_writer = None
+                            
+                            else:
+                                # Regular text chunk - add to TTS token count
+                                self.add_tts_tokens(text)
+                                if self.text_stream_writer:
+                                    await self.text_stream_writer.write(text)
+                                else:
+                                    logger.error("Attempted to write text chunk but no active stream")
+                                    
+                        except Exception as e:
+                            logger.error(f"Error publishing text to LiveKit: {e}")
+                            # Try to clean up the stream if there was an error
+                            if self.text_stream_writer:
+                                try:
+                                    await self.text_stream_writer.aclose()
+                                except:
+                                    pass
+                                self.text_stream_writer = None
+                
+                # Mark task as done
+                self.tts_text_queue.task_done()
+                
+            except asyncio.TimeoutError:
+                # Timeout is normal, just continue to check shutdown flag
+                continue
+            except Exception as e:
+                logger.error(f"Error in text publisher worker: {e}")
+                # Continue running even on errors
+                continue
+        
+        logger.info("Text publisher worker thread stopped")
 
     def _load_conversation_history(self):
         """Load conversation history from database and populate self.messages"""
@@ -201,6 +296,26 @@ class ASR_LLM_Manager:
         """Gracefully cleanup resources before shutdown"""
         self._is_shutting_down = True
         try:
+            # Stop the text publisher worker
+            if self.tts_text_publisher_task:
+                try:
+                    self.tts_text_publisher_task.cancel()
+                    await self.tts_text_publisher_task
+                except asyncio.CancelledError:
+                    pass  # Expected when cancelling
+                except Exception as e:
+                    logger.warning(f"Error stopping text publisher task: {e}")
+                finally:
+                    self.tts_text_publisher_task = None
+
+            # Wait for any remaining queue items to be processed
+            try:
+                await asyncio.wait_for(self.tts_text_queue.join(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for text queue to finish")
+            except Exception as e:
+                logger.warning(f"Error waiting for text queue: {e}")
+
             # Close text stream if it exists
             if self.text_stream_writer:
                 try:
@@ -246,52 +361,15 @@ class ASR_LLM_Manager:
         except Exception as e:
             logger.error(f"Error during event loop shutdown: {e}")
 
-    async def publish_text_livekit(self, text):
+    async def publish_tts_text(self, text):
         """
-        Publish text to LiveKit room using the streaming format
+        Queue text for publishing (non-blocking)
         """
-        if self._is_shutting_down:
-            logger.warning("Skipping text publish during shutdown")
-            return
-
-        if not self.room:
-            logger.error("No LiveKit room available for publishing")
-            return
-
-        try:
-            if text == "[START]":
-                logger.info("=== SENDING [START] MARKER ===")
-                # Start a new text stream
-                self.text_stream_writer = await self.room.local_participant.stream_text(
-                    topic="llm_data"
-                )
-                # Send the [START] marker first
-                await self.text_stream_writer.write("[START]")
-                logger.info("=== [START] MARKER SENT AND STREAM INITIALIZED ===")
-            
-            elif text == "[DONE]" or text == "[INTERRUPTED]":
-                if self.text_stream_writer:
-                    await self.text_stream_writer.write(text)  # Send the marker before closing
-                    await self.text_stream_writer.aclose()
-                    logger.info(f"Closed text stream with marker: {text}")
-                    self.text_stream_writer = None
-            
-            else:
-                # Regular text chunk
-                if self.text_stream_writer:
-                    await self.text_stream_writer.write(text)
-                else:
-                    logger.error("Attempted to write text chunk but no active stream")
-                    
-        except Exception as e:
-            logger.error(f"Error publishing text to LiveKit: {e}")
-            # Try to clean up the stream if there was an error
-            if self.text_stream_writer:
-                try:
-                    await self.text_stream_writer.aclose()
-                except:
-                    pass
-                self.text_stream_writer = None
+        if not self._is_shutting_down:
+            await self.tts_text_queue.put(text)
+            print(f"Queued text for publishing: {text[:50] if text else 'N/A'}")
+        else:
+            print("Skipping text queuing during shutdown")
 
     async def publish_frontend_stream_livekit(self, stream_type, content):
         """
@@ -317,78 +395,20 @@ class ASR_LLM_Manager:
         except Exception as e:
             logger.error(f"Error publishing frontend stream to LiveKit: {e}")
 
-    def final_response_format_check(self, text):
-        response = text.strip()
-        
-        # Find first and second double asterisks
-        double_asterisks_1 = response.find('**')
-        if double_asterisks_1 == -1:
-            return response  # No asterisks found, return raw text
-        
-        double_asterisks_2 = response.find('**', double_asterisks_1 + 2)
-        if double_asterisks_2 == -1:
-            return response  # Only one pair found, return raw text
-        
-        # Get content before first ** (strip)
-        content_before = response[:double_asterisks_1].strip()
-        
-        # Get content between first and second ** (strip)
-        content_between = response[double_asterisks_1 + 2:double_asterisks_2].strip()
-        
-        # Make the full response
-        formatted_result = f"{content_before}\n\n**{content_between}**"
-        
-        return formatted_result
-
-    def calculate_tts_tokens(self, response_text: str, completion_tokens: int) -> int:
+    def add_tts_tokens(self, segment: str):
         """
-        Calculate TTS tokens by separating dialogue from narrative content.
-        TTS tokens = completion_tokens * (dialogue_length / total_length)
+        Add TTS tokens based on character count of the segment.
         
         Args:
-            response_text: The complete response text
-            completion_tokens: Total completion tokens from the LLM
-            
-        Returns:
-            int: Estimated TTS tokens (dialogue only)
+            segment: The text segment being sent to TTS
         """
-        if not response_text or completion_tokens <= 0:
-            return 0
-        
-        # Find all narrative sections (content between ** **)
-        dialogue_parts = []
-        narrative_parts = []
-        
-        # Split the text by ** markers
-        parts = response_text.split('**')
-        
-        for i, part in enumerate(parts):
-            if i % 2 == 0:  # Even indices are dialogue (outside **)
-                if part.strip():
-                    dialogue_parts.append(part.strip())
-            else:  # Odd indices are narrative (inside **)
-                if part.strip():
-                    narrative_parts.append(part.strip())
-        
-        # Calculate total dialogue and narrative lengths
-        dialogue_length = sum(len(part) for part in dialogue_parts)
-        narrative_length = sum(len(part) for part in narrative_parts)
-        total_length = dialogue_length + narrative_length
-        
-        if total_length == 0:
-            return 0
-        
-        # Calculate TTS tokens proportionally
-        dialogue_ratio = dialogue_length / total_length
-        tts_tokens = int(completion_tokens * dialogue_ratio)
-        
-        logger.info(f"TTS token calculation - Dialogue: {dialogue_length} chars, "
-                   f"Narrative: {narrative_length} chars, "
-                   f"Total: {total_length} chars, "
-                   f"Ratio: {dialogue_ratio:.3f}, "
-                   f"TTS tokens: {tts_tokens}")
-        
-        return tts_tokens
+        if segment and not segment.startswith('[') and not segment.endswith(']'):
+            # Only count actual text content, ignore control flags like [START], [DONE], [INTERRUPTED]
+            char_count = len(segment)
+            self.current_usage["tts_tokens"] += char_count
+            logger.debug(f"Added {char_count} TTS characters: '{segment[:50]}{'...' if len(segment) > 50 else ''}'")
+        else:
+            logger.debug(f"Skipping TTS character count for control flag: {segment}")
 
     def get_tts_tokens(self) -> int:
         """
@@ -407,6 +427,25 @@ class ASR_LLM_Manager:
             dict: Complete token usage including prompt, completion, total, TTS, and cost
         """
         return self.current_usage.copy()
+    
+    
+    def replace_special_quotes_to_straight_quotes(self, input_prompt: str) -> str:
+        """Replace special quotes to straight quotes"""
+        if not input_prompt:
+            return input_prompt
+            
+        # Replace various types of curly quotes with straight quotes
+        replacements = {
+            '“': '"',  # Left double quotation mark
+            '”': '"',  # Right double quotation mark         
+        }
+        
+        result = input_prompt
+        for special_quote, straight_quote in replacements.items():
+            if special_quote in result:
+                logger.info(f"Replacing {special_quote} with {straight_quote}")
+                result = result.replace(special_quote, straight_quote)
+        return result
 
     async def send_to_openrouter(self, text):
         """
@@ -418,10 +457,12 @@ class ASR_LLM_Manager:
         first_llm_token_received = False
         current_response = ""
         current_token_usage = 0  # Track tokens for this interaction
-        # State tracking for narrative detection
-        is_on_narrative = False    # True when inside ** narrative **
-        past_double_asterisk_count = 0
-        track_asterisk_index = 0
+        # State tracking for dialogue/narrative detection
+        is_on_dialogue = False    # True when inside " dialogue "
+        past_quote_count = 0
+        track_char_index = 0
+        consecutive_narrative_chars = 0 
+        consecutive_dialogue_chars = 0  # "Prev dialogue speak time" + "prev Narrative read time" = "New prev-dialogue sleep time"
 
         # Add user message to self.messages (single source of truth)
         self.messages.append({"role": "user", "content": text})
@@ -457,7 +498,7 @@ class ASR_LLM_Manager:
         # print("\n=== End Message History ===\n")
 
         # Send stream start at the beginning
-        await self.publish_text_livekit("[START]")
+        await self.publish_tts_text("[START]")
 
         with requests.post(
             self.openrouter_url,
@@ -491,14 +532,13 @@ class ASR_LLM_Manager:
                             )
                             for segment in remaining_segments:
                                 logger.info(f"sending segment in final: {segment} \n")
-                                await self.publish_text_livekit(segment)
-                                
-                            # final response format check
-                            current_response = self.final_response_format_check(current_response)
+                                await self.publish_tts_text(segment)
 
-                            # Calculate TTS tokens (dialogue only, excluding narrative)
-                            tts_tokens = self.calculate_tts_tokens(current_response, self.current_usage["completion_tokens"])
-                            self.current_usage["tts_tokens"] += tts_tokens
+                            # Send [DONE] to TTS to close the text stream
+                            await self.publish_tts_text("[DONE]")
+
+                            # TTS tokens are now tracked in real-time via publish_text_livekit
+                            logger.info(f"Total TTS characters sent: {self.current_usage['tts_tokens']}")
 
                             # Add assistant message to self.messages (single source of truth)
                             self.messages.append(
@@ -541,41 +581,58 @@ class ASR_LLM_Manager:
                                           f"Cost: {self.current_usage['cost']}")
                             
                             content = data_obj["choices"][0]["delta"].get("content")
+                            content = self.replace_special_quotes_to_straight_quotes(content)
                             if content:
                                 current_response += content
                                 
                                 # Send delta content to frontend immediately via LiveKit
                                 await self.publish_frontend_stream_livekit("CONTENT", content)
                                 
-                                # Track double asterisks for narrative detection
-                                while track_asterisk_index + 1 < len(current_response):
-                                    checking_str = current_response[track_asterisk_index : track_asterisk_index + 2]
-                                    checking_char = current_response[track_asterisk_index]
-                                    if checking_str == '**':
-                                        past_double_asterisk_count += 1
-                                        is_on_narrative = (past_double_asterisk_count % 2 == 1)
-                                        if is_on_narrative:
-                                            # We're in narrative mode, Process any remaining tts buffer content
+                                # Track quotation marks for dialogue/narrative detection
+                                while track_char_index < len(current_response):
+                                    checking_char = current_response[track_char_index]
+                                    if checking_char == '"':
+                                        past_quote_count += 1
+                                        was_on_dialogue = is_on_dialogue
+                                        is_on_dialogue = (past_quote_count % 2 == 1)
+                                        
+                                        if not was_on_dialogue and is_on_dialogue:
+                                            # We're switching from narrative to dialogue, send sleep before dialogue
+                                            if consecutive_narrative_chars > 0 or consecutive_dialogue_chars > 0:
+                                                sleep_duration = consecutive_narrative_chars * 0.01 + consecutive_dialogue_chars * 0.065
+                                                print(f"Sending sleep command: {consecutive_narrative_chars} chars = {sleep_duration:.3f}s")
+                                                await self.publish_tts_text(f"[SLEEP] {sleep_duration}")
+                                                consecutive_narrative_chars = 0
+                                                consecutive_dialogue_chars = 0  # Reset counter
+                                        
+                                        elif was_on_dialogue and not is_on_dialogue:
+                                            # We're switching from dialogue to narrative, Process any remaining tts buffer content
                                             if len(self.text_chunk_spliter.buffer) > 0:
                                                 remaining_segments = (
                                                     self.text_chunk_spliter.get_remaining_buffer()
                                                 )
                                                 for segment in remaining_segments:
-                                                    logger.info(f"clearing tts buffer in narrative mode: {segment}")
-                                                    await self.publish_text_livekit(segment)
-                                        # Send stream end
-                                        await self.publish_text_livekit("[DONE]")
-                                        track_asterisk_index += 2
-                                    elif not is_on_narrative:
+                                                    logger.info(f"clearing tts buffer when switching to narrative: {segment}")
+                                                    await self.publish_tts_text(segment)
+                                            # Reset narrative counter when exiting dialogue
+                                            consecutive_narrative_chars = 0
+                                        
+                                        # Don't send [DONE] when switching modes - only send it when LLM response is complete
+                                        track_char_index += 1
+                                        
+                                    elif is_on_dialogue:
+                                        # We're in dialogue mode, send to TTS buffer
                                         segments = self.text_chunk_spliter.process_chunk(checking_char)
                                         for segment in segments:
-                                            logger.info(f"sending segment: {segment}")
-                                            await self.publish_text_livekit(segment)
+                                            logger.info(f"sending dialogue segment: {segment}")
+                                            await self.publish_tts_text(segment)
                                         
-                                        track_asterisk_index += 1
+                                        track_char_index += 1
+                                        consecutive_dialogue_chars += 1
                                     else:
-                                        # on narrative, keep moving forward
-                                        track_asterisk_index += 1
+                                        # We're in narrative mode, count characters for timing
+                                        consecutive_narrative_chars += 1
+                                        track_char_index += 1
 
                         except json.JSONDecodeError:
                             logger.warning(f"Could not decode JSON data: {data}")
@@ -588,7 +645,7 @@ class ASR_LLM_Manager:
                         logger.warning("Stopping LLM stream due to user interruption.")
                         self.user_interrupting_flag = False
                         print("\n[INTERRUPTED]")
-                        await self.publish_text_livekit("[INTERRUPTED]")
+                        await self.publish_tts_text("[INTERRUPTED]")
                         
                         # Send INTERRUPTED marker to frontend immediately via LiveKit
                         await self.publish_frontend_stream_livekit("INTERRUPTED", "")

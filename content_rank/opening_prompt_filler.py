@@ -57,29 +57,23 @@ class AvatarOpeningPromptFiller:
         # System prompt for generating opening messages
         self.base_system_prompt = """You are a creative writer specializing in roleplay character interactions. Your task is to generate an engaging opening message for a character meeting someone for the first time.
 
-You must respond in this EXACT format – ONLY these two lines:
-Line 1: EXACTLY ONE dialogue line enclosed in quotation marks "..."
-Line 2: EXACTLY ONE narrative line enclosed in double asterisks **...**
-STRICT FORMAT REQUIREMENTS:
-ONLY ONE dialogue line – do not write multiple dialogue sentences
-ONLY ONE narrative line – do not write multiple narrative sentences
-EXACTLY TWO LINES TOTAL – no more, no less
-Line 1 must be dialogue in quotation marks: "single dialogue here"
-Line 2 must be narrative in double asterisks: **single narrative here**
-Write narrative in third person (he/she/they, not I/me)
-Do not break dialogue with narrative insertions
-Do not use emojis, emoticons, or special characters
+You must respond in this format:
+- Always place dialogue at the early part of your response - do not begin with long narratives followed by dialogue.
+- Only dialogue should be wrapped in straight quotation marks \"...\". You are not allowed to use other quotation marks like single quotes or curly double quotes. Narrative portions should not have any straight quotation marks.
+- Dialogue should be wrapped in straight quotation marks: "dialogue here". 
+- Each pair of quotation marks should be a single segment of dialogue. You should limit total count of segments of dialogue to two.
+- Narrative should have no special formatting (no asterisks or other symbols). Use more new lines to break it into multiple sentences if needed. Avoid cramming too many sentences into a single line.
+- Write narrative in third person (he/she/they, not I/me).
+- Do not use emojis, emoticons, or special characters like * or **.
+
 GREETINGS MUST:
-Be around 100 words total across both lines 
-Reflect the bot’s unique background, personality, and past
+Be less than 100 words total.
+Reflect the character's unique background, personality, and past
 Establish their prior connection or intrigue with the user
 Immediately set up an engaging story hook or scenario
 Stay natural and immersive in tone, like a real person speaking
-Example:
-"Did you really think you could capture me? Now, tell me... why are you really here?"
 
-**The room is dimly lit, casting long shadows as you regain consciousness. Your wrists are bound to the chair, and a dull ache reminds you of the struggle before. You, a policewoman, had come here to capture him—to bring down Alexander Chelsea, the notorious mafia boss. But now, you're the one at his mercy. Alexander stands before you, dressed impeccably in his black suit, a leather whip coiled in his hand. His dark eyes glint with cruel amusement as he steps closer, towering over you. His voice cold and smooth. He trails the whip along your arm, his gaze never leaving yours.**
-CRITICAL: Your response must contain EXACTLY one dialogue line and EXACTLY one narrative line. Do not deviate from this format.."""
+Generate an opening message that starts with dialogue and follows with narrative description. Given the scene/setting, you should generate a dialogue that is relevant to the scene/setting. """
 
     def get_avatars_for_processing(self, limit: int = None) -> List[Tuple[str, str, str, str]]:
         """Get avatar data for opening prompt generation (overwriting existing prompts)"""
@@ -220,6 +214,24 @@ CRITICAL: Your response must contain EXACTLY one dialogue line and EXACTLY one n
             logger.error(f"Database update failed for {avatar_id}: {e}")
             return False
 
+    def replace_special_quotes_to_straight_quotes(self, input_prompt: str) -> str:
+        """Replace special quotes to straight quotes"""
+        if not input_prompt:
+            return input_prompt
+            
+        # Replace various types of curly quotes with straight quotes
+        replacements = {
+            '“': '"',  # Left double quotation mark
+            '”': '"',  # Right double quotation mark         
+        }
+        
+        result = input_prompt
+        for special_quote, straight_quote in replacements.items():
+            if special_quote in result:
+                logger.info(f"Replacing {special_quote} with {straight_quote}")
+                result = result.replace(special_quote, straight_quote)
+        return result
+
     def process_single_avatar(self, avatar_data: Tuple[str, str, str, str]) -> bool:
         """Process a single avatar - generate and update opening prompt"""
         avatar_id, prompt, scene_prompt, bio = avatar_data
@@ -230,6 +242,8 @@ CRITICAL: Your response must contain EXACTLY one dialogue line and EXACTLY one n
             if not opening_prompt:
                 logger.error(f"Failed to generate opening prompt for {avatar_id}")
                 return False
+            
+            opening_prompt = self.replace_special_quotes_to_straight_quotes(opening_prompt)
             
             # Update database
             if not self.update_opening_prompt(avatar_id, opening_prompt):

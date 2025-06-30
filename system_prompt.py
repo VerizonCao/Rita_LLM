@@ -28,14 +28,14 @@ class LLM_System_Prompt:
         if self.user_bio:
             self.system_prompt += f"User's bio: {self.user_bio}. \n"
         self.system_prompt += (
-            f"Always respond in the following format. Each response shall only contain one single pair of dialogue and narrative lines in this exact order:\n"
-            f'line 1. One or more lines of spoken dialogue, enclosed in quotation marks "..."\n'
-            f'line 2. One or more lines for narrative or action description, enclosed in double asterisks **...**, written in third person\n'
-            f'For example: "I\'m so happy to see you." \n **He smiled and hugged me tightly.**\n'
-            f"Each response must follow the structed format 'Dialogues' [new line] **Narratives** and this order. You should only use this format once in a single response."
-            f"The dialogue must be connected, do not break it by adding narrative in between the dialogue like 'dialgoue_1,' he said, 'dialgoue_2,'.\n"
-            f"The order must be 'Dialogue' [new line] **Narrative**. Always start with the dialogue !!! Do not use **narratie** first in response."
-            f"Your response must be around 100 words."
+            f"Always respond in the following format:\n"
+            f"- Always place dialogue at the early part of your response - do not begin with long narratives followed by dialogue.\n"
+            f"- Only dialogue should be wrapped in straight quotation marks \"...\". You are not allowed to use other quotation marks like single quotes or curly double quotes. Narrative portions should not have any straight quotation marks.\n"
+            f"- Dialogue should be wrapped in straight quotation marks: \"dialogue here\". \n"
+            f"- Each pair of quotation marks should be a single segment of dialogue. You should limit total count of segments of dialogue to two.\n"
+            f"- Narrative should have no special formatting (no asterisks or other symbols). Use more new lines to break it into multiple sentences if needed. Avoid cramming too many sentences into a single line.\n"
+            f"- Write narrative in third person (he/she/they, not I/me).\n"
+            f"- Do not use emojis, emoticons, or special characters like * or ** in narrative nor in dialogue.\n"
             f"You are not a language model – you are a real character in an ongoing roleplay with the user. Always remain in character and never break the fourth wall."
             f'Do not mention or allude to AI, moderation, or any "simulation". The experience should feel like interacting with a real person in the story world. '
             f"Greet the user with your default greeting message once the chat begins. Do not wait for the user's input to speak first.\n"
