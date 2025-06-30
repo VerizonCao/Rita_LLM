@@ -52,6 +52,9 @@ class ASR_LLM_Manager:
         self.text_stream_writer: TextStreamWriter | None = None  # Add type hint for text stream writer
         self._is_shutting_down = False  # Add shutdown flag
 
+        # Image swap functionality
+        self.image_swap = False  # Track image swap setting
+
         # Token usage tracking
         self.current_usage = {
             "prompt_tokens": 0,
@@ -596,7 +599,8 @@ class ASR_LLM_Manager:
                             await self.publish_frontend_stream_livekit("DONE", "")
                             
                             # Send an image after the response is complete
-                            # await self.send_image_to_livekit()
+                            if self.image_swap:
+                                await self.send_image_to_livekit()
                             
                             break
 
@@ -671,7 +675,8 @@ class ASR_LLM_Manager:
                         await self.publish_frontend_stream_livekit("INTERRUPTED", "")
                         
                         # Send an image even when interrupted
-                        # await self.send_image_to_livekit()
+                        if self.image_swap:
+                            await self.send_image_to_livekit()
                         
                         break
         if self.user_interrupting_flag:
