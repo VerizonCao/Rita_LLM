@@ -245,6 +245,7 @@ def run_audio_capture_test(
     audio_capture_wrapper: AudioCaptureWrapper = None,
     room = None,
     loop = None,
+    image_swap=False,
 ):
     audio_capture = None
 
@@ -257,6 +258,8 @@ def run_audio_capture_test(
             room=room,
             loop=loop,
         )
+
+        event_handler.asr_llm_manager.image_swap = image_swap
 
         if use_silero_vad:
             logger.info("Using Silero VAD...")
@@ -329,10 +332,11 @@ def run_audio2audio_in_thread(
     audio_capture_wrapper: AudioCaptureWrapper = None,
     room = None,
     loop = None,
+    image_swap=False,
 ):
     thread = threading.Thread(
         target=run_audio_capture_test,
-        args=(status, config, True, audio_play_locally, audio_capture_wrapper, room, loop),
+        args=(status, config, True, audio_play_locally, audio_capture_wrapper, room, loop, image_swap),
         daemon=True,
     )
     thread.start()
