@@ -13,6 +13,8 @@ from livekit.rtc import TextStreamWriter  # Add TextStreamWriter import
 import asyncio
 from dotenv import load_dotenv
 from typing import Optional
+import glob
+import random
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -117,6 +119,37 @@ class ASR_LLM_Manager:
             "llm_first_token_time": -1,
         }
         self.user_interrupting_flag = False
+
+        # Image sending functionality, remove me when we are actually have images from genai. 
+        self.test_images = self._load_test_images()
+        self.current_image_index = 0
+
+    def _load_test_images(self) -> list:
+        """Load all test images from the test folder"""
+        try:
+            test_folder = Path(__file__).parent / "test"
+            if not test_folder.exists():
+                logger.warning(f"Test folder not found: {test_folder}")
+                return []
+            
+            # Get all image files (png, jpg, jpeg, gif, etc.)
+            image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"]
+            image_files = []
+            
+            for ext in image_extensions:
+                image_files.extend(glob.glob(str(test_folder / ext)))
+                image_files.extend(glob.glob(str(test_folder / ext.upper())))
+            
+            if not image_files:
+                logger.warning(f"No image files found in test folder: {test_folder}")
+                return []
+            
+            logger.info(f"Loaded {len(image_files)} test images: {[Path(f).name for f in image_files]}")
+            return image_files
+            
+        except Exception as e:
+            logger.error(f"Failed to load test images: {e}")
+            return []
 
     def _load_conversation_history(self):
         """Load conversation history from database and populate self.messages"""
@@ -316,6 +349,46 @@ class ASR_LLM_Manager:
             logger.debug(f"Published frontend stream: {stream_type} - {content[:50] if content else 'N/A'}")
         except Exception as e:
             logger.error(f"Error publishing frontend stream to LiveKit: {e}")
+
+    async def send_image_to_livekit(self):
+        """
+        Send a test image to the LiveKit data channel with topic 'image_file'
+        Cycles through available test images
+        """
+        if self._is_shutting_down:
+            logger.warning("Skipping image send during shutdown")
+            return
+
+        if not self.room:
+            logger.error("No LiveKit room available for image sending")
+            return
+
+        if not self.test_images:
+            logger.warning("No test images available to send")
+            return
+
+        try:
+            # Get the current image file
+            image_path = self.test_images[self.current_image_index]
+            image_name = Path(image_path).name
+            
+            logger.info(f"Sending image: {image_name}")
+            
+            # Send the image file using LiveKit's send_file method
+            info = await self.room.local_participant.send_file(
+                file_path=image_path,
+                topic="image_file",
+            )
+            
+            logger.info(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
+            
+            # Move to next image (cycle through available images)
+            self.current_image_index = (self.current_image_index + 1) % len(self.test_images)
+            
+        except Exception as e:
+            logger.error(f"Error sending image to LiveKit: {e}")
+            # Try to move to next image even if current one failed
+            self.current_image_index = (self.current_image_index + 1) % len(self.test_images)
 
     def final_response_format_check(self, text):
         response = text.strip()
@@ -521,6 +594,10 @@ class ASR_LLM_Manager:
                             
                             # Send DONE marker to frontend immediately via LiveKit
                             await self.publish_frontend_stream_livekit("DONE", "")
+                            
+                            # Send an image after the response is complete
+                            # await self.send_image_to_livekit()
+                            
                             break
 
                         try:
@@ -592,6 +669,10 @@ class ASR_LLM_Manager:
                         
                         # Send INTERRUPTED marker to frontend immediately via LiveKit
                         await self.publish_frontend_stream_livekit("INTERRUPTED", "")
+                        
+                        # Send an image even when interrupted
+                        # await self.send_image_to_livekit()
+                        
                         break
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
