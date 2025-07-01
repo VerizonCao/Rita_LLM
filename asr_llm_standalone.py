@@ -134,6 +134,10 @@ class ASR_LLM_Manager:
         else:
             logger.warning("No event loop provided, TTS text publisher not started")
 
+        # Image sending functionality, remove me when we are actually have images from genai. 
+        self.test_images = self._load_test_images()
+        self.current_image_index = 0
+
     async def start_tts_text_publisher(self):
         """Start the background text publisher task"""
         if self.tts_text_publisher_task is None:
@@ -216,10 +220,6 @@ class ASR_LLM_Manager:
                 continue
         
         logger.info("Text publisher worker thread stopped")
-
-        # Image sending functionality, remove me when we are actually have images from genai. 
-        self.test_images = self._load_test_images()
-        self.current_image_index = 0
 
     def _load_test_images(self) -> list:
         """Load all test images from the test folder"""
