@@ -471,27 +471,8 @@ class ASR_LLM_Manager:
             self.current_image_index = (self.current_image_index + 1) % len(self.test_images)
 
     def final_response_format_check(self, text):
-        response = text.strip()
-        
-        # Find first and second double asterisks
-        double_asterisks_1 = response.find('**')
-        if double_asterisks_1 == -1:
-            return response  # No asterisks found, return raw text
-        
-        double_asterisks_2 = response.find('**', double_asterisks_1 + 2)
-        if double_asterisks_2 == -1:
-            return response  # Only one pair found, return raw text
-        
-        # Get content before first ** (strip)
-        content_before = response[:double_asterisks_1].strip()
-        
-        # Get content between first and second ** (strip)
-        content_between = response[double_asterisks_1 + 2:double_asterisks_2].strip()
-        
-        # Make the full response
-        formatted_result = f"{content_before}\n\n**{content_between}**"
-        
-        return formatted_result
+        response = text.strip()        
+        return response
 
     def add_tts_tokens(self, segment: str):
         """
@@ -578,23 +559,21 @@ class ASR_LLM_Manager:
             logger.error(f"Failed to save user message to database: {e}")
 
         payload = {
-            "model": "google/gemini-2.5-flash-preview-05-20",
+            "model": "deepseek/deepseek-chat-v3-0324",
             "messages": self.messages,
             "stream": True,
-            "provider": {"sort": "latency"},
+            "provider": {
+                'order': 
+                [
+                    'deepinfra/fp4',
+                    'lambda/fp8',
+                    'baseten/fp8',
+                ]
+                },
             "usage": {
                 "include": True
             }
         }
-
-        # Print system prompt and messages for debugging
-        # print("\n=== System Prompt ===")
-        # print(self.system_prompt)
-        # print("\n=== Message History ===")
-        # for msg in self.messages:
-        #     print(f"\nRole: {msg['role']}")
-        #     print(f"Content: {msg['content']}")
-        # print("\n=== End Message History ===\n")
 
         with requests.post(
             self.openrouter_url,
@@ -639,7 +618,8 @@ class ASR_LLM_Manager:
                             # TTS tokens are now tracked in real-time via publish_text_livekit
                             logger.info(f"Total TTS characters sent: {self.current_usage['tts_tokens']}")
 
-                            # Add assistant message to self.messages (single source of truth)
+                            # Add assistant message (single source of truth)
+                            current_response = self.final_response_format_check(current_response)
                             self.messages.append(
                                 {"role": "assistant", "content": current_response}
                             )
