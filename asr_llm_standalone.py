@@ -16,6 +16,11 @@ from typing import Optional
 import glob
 import random
 
+# MCP Client imports
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from contextlib import AsyncExitStack
+
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
@@ -39,7 +44,10 @@ class ASR_LLM_Manager:
         llm_data: tuple = None,
         room: rtc.Room = None,  # Add type hint for LiveKit room
         loop: asyncio.AbstractEventLoop = None,  # Add event loop parameter
+        mcp_server_path: str = None,  # Add MCP server path parameter
     ):
+        
+
         # Initialize Deepinfra client for Whisper ASR
         self.openai_client = OpenAI(
             api_key=os.getenv("DEEPINFRA_API_KEY"),
@@ -53,6 +61,21 @@ class ASR_LLM_Manager:
         self.loop = loop  # Store the event loop reference
         self.text_stream_writer: TextStreamWriter | None = None  # Add type hint for text stream writer
         self._is_shutting_down = False  # Add shutdown flag
+
+        # MCP Client setup
+        self.mcp_server_path = mcp_server_path  # Always initialize, even if None
+        if mcp_server_path:
+            self.session: Optional[ClientSession] = None
+            self.exit_stack = AsyncExitStack()
+            self.stdio = None
+            self.write = None
+            self.available_tools = []
+        else:
+            self.session = None
+            self.exit_stack = None
+            self.stdio = None
+            self.write = None
+            self.available_tools = []
 
         # Text publishing queue for non-blocking operation
         self.tts_text_queue = asyncio.Queue()
@@ -69,12 +92,14 @@ class ASR_LLM_Manager:
             "tts_tokens": 0  # Track tokens for TTS (dialogue only, excluding narrative)
         }
 
-        # OpenRouter configuration
+        # OpenRouter configuration (kept for fallback and token tracking)
         self.openrouter_url = "https://openrouter.ai/api/v1/chat/completions"
         self.openrouter_headers = {
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
             "Content-Type": "application/json",
         }
+        self.model = "google/gemini-2.5-flash-preview-05-20"
+        
         (
             user_nickname,
             user_bio,
@@ -131,12 +156,82 @@ class ASR_LLM_Manager:
         # Schedule the async task on the proper event loop
         if self.loop:
             asyncio.run_coroutine_threadsafe(self.start_tts_text_publisher(), self.loop)
+            if self.mcp_server_path:
+                # Also initialize MCP connection since we have a hardcoded path
+                asyncio.run_coroutine_threadsafe(self.initialize_mcp_connection(), self.loop)
         else:
             logger.warning("No event loop provided, TTS text publisher not started")
+            logger.warning("No event loop provided, MCP connection not initialized")
 
         # Image sending functionality, remove me when we are actually have images from genai. 
         self.test_images = self._load_test_images()
         self.current_image_index = 0
+
+    async def connect_to_mcp_server(self):
+        """Connect to the MCP server"""
+        if not self.mcp_server_path:
+            logger.warning("No MCP server path provided, skipping MCP connection")
+            return False
+            
+        try:
+            is_python = self.mcp_server_path.endswith('.py')
+            is_js = self.mcp_server_path.endswith('.js')
+            if not (is_python or is_js):
+                raise ValueError("Server script must be a .py or .js file")
+
+            command = "python" if is_python else "node"
+            server_params = StdioServerParameters(
+                command=command,
+                args=[self.mcp_server_path],
+                env=None
+            )
+
+            stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
+            self.stdio, self.write = stdio_transport
+            self.session = await self.exit_stack.enter_async_context(ClientSession(self.stdio, self.write))
+
+            await self.session.initialize()
+
+            # List available tools and cache them
+            response = await self.session.list_tools()
+            tools = response.tools
+            self.available_tools = [{
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.inputSchema
+            } for tool in tools]
+            logger.info(f"Connected to MCP server with tools: {[tool.name for tool in tools]}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to MCP server: {e}")
+            return False
+
+    def _convert_mcp_tools_to_openai_format(self):
+        """Convert MCP tools to OpenAI/OpenRouter format"""
+        openai_tools = []
+        for tool in self.available_tools:
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"]
+                }
+            }
+            openai_tools.append(openai_tool)
+        return openai_tools
+
+    async def initialize_mcp_connection(self):
+        """Initialize MCP connection if server path is provided"""
+        if self.mcp_server_path:
+            success = await self.connect_to_mcp_server()
+            if success:
+                logger.info("MCP connection established successfully")
+            else:
+                logger.warning("Failed to establish MCP connection, will use fallback mode")
+        else:
+            logger.info("No MCP server path provided, using fallback mode")
 
     async def start_tts_text_publisher(self):
         """Start the background text publisher task"""
@@ -369,6 +464,17 @@ class ASR_LLM_Manager:
                 finally:
                     self.room = None
 
+            # Cleanup MCP client resources
+            if self.exit_stack:
+                try:
+                    await self.exit_stack.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing MCP client: {e}")
+                finally:
+                    self.session = None
+                    self.stdio = None
+                    self.write = None
+
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
         finally:
@@ -548,7 +654,7 @@ class ASR_LLM_Manager:
     async def send_to_openrouter(self, text):
         """
         1. receives text from ASR or user input.
-        2. send text to LLM and get streaming response.
+        2. send text to LLM and get streaming response with MCP tool support, if MCP enabled. 
         3. print the response and publish to LiveKit.
         """
         self.user_interrupting_flag = False
@@ -577,24 +683,71 @@ class ASR_LLM_Manager:
         except Exception as e:
             logger.error(f"Failed to save user message to database: {e}")
 
-        payload = {
-            "model": "google/gemini-2.5-flash-preview-05-20",
-            "messages": self.messages,
-            "stream": True,
-            "provider": {"sort": "latency"},
-            "usage": {
-                "include": True
-            }
-        }
+        # Check if MCP server is available
+        if self.session and self.available_tools:
+            # Use MCP client with tool support
+            print("Using MCP tools")
+            await self._process_with_mcp_tools(text)
+        else:
+            # Fallback to direct OpenRouter call without tools
+            print("Using direct OpenRouter call without tools")
+            await self._process_with_direct_openrouter(text)
 
-        # Print system prompt and messages for debugging
-        # print("\n=== System Prompt ===")
-        # print(self.system_prompt)
-        # print("\n=== Message History ===")
-        # for msg in self.messages:
-        #     print(f"\nRole: {msg['role']}")
-        #     print(f"Content: {msg['content']}")
-        # print("\n=== End Message History ===\n")
+    async def _process_with_mcp_tools(self, text):
+        """Process query using MCP tools with streaming support"""
+        try:
+            # Convert MCP tools to OpenAI format
+            openai_tools = self._convert_mcp_tools_to_openai_format()
+
+            # Prepare messages with system prompt included
+            messages = [{"role": "system", "content": self.system_prompt}] + self.messages[1:]  # Skip system prompt from self.messages
+
+            # Initial OpenRouter API call with tools
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "max_tokens": 1000,
+                "tools": openai_tools,
+                "provider": {"sort": "latency"},
+                "usage": {"include": True}
+            }
+
+            # Process streaming response with tool handling
+            await self._handle_streaming_response_common(payload, text, with_tools=True)
+
+        except Exception as e:
+            logger.error(f"Error in MCP tool processing: {e}")
+            # Fallback to direct processing
+            await self._process_with_direct_openrouter(text)
+
+    async def _process_with_direct_openrouter(self, text):
+        """Process query using direct OpenRouter call (fallback)"""
+        try:
+            payload = {
+                "model": self.model,
+                "messages": self.messages,
+                "stream": True,
+                "provider": {"sort": "latency"},
+                "usage": {"include": True}
+            }
+
+            # Process streaming response without tools
+            await self._handle_streaming_response_common(payload, text, with_tools=False)
+
+        except Exception as e:
+            logger.error(f"Error in direct OpenRouter processing: {e}")
+
+    async def _handle_streaming_response_common(self, payload, text, with_tools=False):
+        """Handle streaming response, optionally with tool calls"""
+        first_llm_token_received = False
+        current_response = ""
+        is_on_dialogue = False
+        is_tts_started = False
+        past_quote_count = 0
+        track_char_index = 0
+        consecutive_narrative_chars = 0 
+        consecutive_dialogue_chars = 0
 
         with requests.post(
             self.openrouter_url,
@@ -603,172 +756,229 @@ class ASR_LLM_Manager:
             stream=True,
         ) as r:
             r.raise_for_status()
-            # Ensure proper UTF-8 encoding
             r.encoding = "utf-8"
+
             for chunk in r.iter_lines(chunk_size=1024, decode_unicode=True):
-                if chunk:  # filter out keep-alive new chunks
+                if chunk:
                     line = chunk.strip()
                     if not first_llm_token_received:
                         first_llm_token_received = True
-                        
-                        # Send START marker to frontend immediately via LiveKit
                         await self.publish_frontend_stream_livekit("START", "")
-                        
                         self.timing["llm_first_token_time"] = time.time()
                         if self.timing["whisper_end_time"] != -1:
                             logger.info(
                                 f"Time from whisper end to LLM first token: {self.timing['llm_first_token_time'] - self.timing['whisper_end_time']:.2f} seconds"
                             )
+
                     if line.startswith("data: "):
                         data = line[6:]
                         if data == "[DONE]":
-                            # Process any remaining tts buffer content
-                            remaining_segments = (
-                                self.text_chunk_spliter.get_remaining_buffer()
-                            )
-                            for segment in remaining_segments:
-                                if not is_tts_started:
-                                    is_tts_started = True
-                                    await self.publish_tts_text("[START]")
-                                logger.info(f"sending segment in final: {segment} \n")
-                                await self.publish_tts_text(segment)
-
-                            # Send [DONE] to TTS to close the text stream
-                            await self.publish_tts_text("[DONE]")
-
-                            # TTS tokens are now tracked in real-time via publish_text_livekit
-                            logger.info(f"Total TTS characters sent: {self.current_usage['tts_tokens']}")
-
-                            # Add assistant message to self.messages (single source of truth)
-                            self.messages.append(
-                                {"role": "assistant", "content": current_response}
-                            )
-                            logger.info(f"Current response: {current_response}")
-                            print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
-                            
-                            # Save LLM response to database
-                            try:
-                                self.chat_session_manager.write_assistant_message(
-                                    user_id=self.user_id,
-                                    avatar_id=self.avatar_id,
-                                    content=current_response,
-                                    assistant_name=self.assistant_nickname or "Assistant",
-                                    model="google/gemini-2.5-flash-preview-05-20"
-                                )
-                            except Exception as e:
-                                logger.error(f"Failed to save LLM response to database: {e}")
-                            
-                            # Send DONE marker to frontend immediately via LiveKit
-                            await self.publish_frontend_stream_livekit("DONE", "")
-                            
-                            # Send an image after the response is complete
-                            if self.image_swap:
-                                await self.send_image_to_livekit()
-                            
+                            await self._finalize_response(current_response, text)
                             break
 
                         try:
                             data_obj = json.loads(data)
-                            
-                            # Check for usage information
+
+                            # Token usage
                             if "usage" in data_obj:
                                 usage = data_obj["usage"]
-                                # Accumulate all usage values
                                 self.current_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
                                 self.current_usage["completion_tokens"] += usage.get("completion_tokens", 0)
                                 self.current_usage["total_tokens"] += usage.get("total_tokens", 0)
                                 self.current_usage["cost"] += usage.get("cost", 0)
-                                
+
                                 logger.info(f"Token usage - Prompt: {self.current_usage['prompt_tokens']}, "
-                                          f"Completion: {self.current_usage['completion_tokens']}, "
-                                          f"Total: {self.current_usage['total_tokens']}, "
-                                          f"Cost: {self.current_usage['cost']}")
-                            
-                            content = data_obj["choices"][0]["delta"].get("content")
-                            content = self.replace_special_quotes_to_straight_quotes(content)
-                            if content:
-                                current_response += content
-                                
-                                # Send delta content to frontend immediately via LiveKit
-                                await self.publish_frontend_stream_livekit("CONTENT", content)
-                                
-                                # Track quotation marks for dialogue/narrative detection
-                                while track_char_index < len(current_response):
-                                    checking_char = current_response[track_char_index]
-                                    if checking_char == '"':
-                                        past_quote_count += 1
-                                        was_on_dialogue = is_on_dialogue
-                                        is_on_dialogue = (past_quote_count % 2 == 1)
-                                        
-                                        if not was_on_dialogue and is_on_dialogue:
-                                            # We're switching from narrative to dialogue, send sleep before dialogue
-                                            if consecutive_narrative_chars > 0 or consecutive_dialogue_chars > 0:
-                                                sleep_duration = consecutive_narrative_chars * 0.01 + consecutive_dialogue_chars * 0.065
-                                                print(f"Sending sleep command: {consecutive_narrative_chars} chars = {sleep_duration:.3f}s")
-                                                await self.publish_tts_text(f"[SLEEP] {sleep_duration}")
-                                                consecutive_narrative_chars = 0
-                                                consecutive_dialogue_chars = 0  # Reset counter
-                                        
-                                        elif was_on_dialogue and not is_on_dialogue:
-                                            # We're switching from dialogue to narrative, Process any remaining tts buffer content
-                                            if len(self.text_chunk_spliter.buffer) > 0:
-                                                remaining_segments = (
-                                                    self.text_chunk_spliter.get_remaining_buffer()
-                                                )
-                                                for segment in remaining_segments:
-                                                    logger.info(f"clearing tts buffer when switching to narrative: {segment}")
-                                                    if not is_tts_started:
-                                                        is_tts_started = True
-                                                        await self.publish_tts_text("[START]")
-                                                    await self.publish_tts_text(segment)
-                                            # Reset narrative counter when exiting dialogue
-                                            consecutive_narrative_chars = 0
-                                            is_tts_started = False
-                                            await self.publish_tts_text("[DONE]")
-                                        
-                                        # Don't send [DONE] when switching modes - only send it when LLM response is complete
-                                        track_char_index += 1
-                                        
-                                    elif is_on_dialogue:
-                                        # We're in dialogue mode, send to TTS buffer
-                                        segments = self.text_chunk_spliter.process_chunk(checking_char)
-                                        for segment in segments:
-                                            if not is_tts_started:
-                                                is_tts_started = True
-                                                await self.publish_tts_text("[START]")
-                                            await self.publish_tts_text(segment)
-                                        
-                                        track_char_index += 1
-                                        consecutive_dialogue_chars += 1
-                                    else:
-                                        # We're in narrative mode, count characters for timing
-                                        consecutive_narrative_chars += 1
-                                        track_char_index += 1
-                                        if is_tts_started:
-                                            is_tts_started = False
-                                            await self.publish_tts_text("[DONE]")
+                                            f"Completion: {self.current_usage['completion_tokens']}, "
+                                            f"Total: {self.current_usage['total_tokens']}, "
+                                            f"Cost: {self.current_usage['cost']}")
+
+                            # Process choices
+                            if "choices" in data_obj and data_obj["choices"]:
+                                delta = data_obj["choices"][0].get("delta", {})
+
+                                if with_tools and "tool_calls" in delta:
+                                    await self._handle_tool_calls(delta["tool_calls"])
+                                    continue
+
+                                content = delta.get("content")
+                                if content:
+                                    content = self.replace_special_quotes_to_straight_quotes(content)
+                                    current_response += content
+                                    await self.publish_frontend_stream_livekit("CONTENT", content)
+                                    (is_on_dialogue, is_tts_started, past_quote_count, track_char_index, 
+                                     consecutive_narrative_chars, consecutive_dialogue_chars) = await self._process_content_for_tts(
+                                        content, is_on_dialogue, is_tts_started, 
+                                        past_quote_count, track_char_index, 
+                                        consecutive_narrative_chars, consecutive_dialogue_chars)
 
                         except json.JSONDecodeError:
                             logger.warning(f"Could not decode JSON data: {data}")
-                            pass  # Ignore malformed JSON lines
                         except Exception as e:
                             logger.error(f"Error processing stream data chunk: {e}")
-                            break  # Safer to break the inner loop on unexpected errors
+                            break
 
                     if self.user_interrupting_flag:
-                        logger.warning("Stopping LLM stream due to user interruption.")
-                        self.user_interrupting_flag = False
-                        print("\n[INTERRUPTED]")
-                        await self.publish_tts_text("[INTERRUPTED]")
-                        
-                        # Send INTERRUPTED marker to frontend immediately via LiveKit
-                        await self.publish_frontend_stream_livekit("INTERRUPTED", "")
-                        
-                        # Send an image even when interrupted
-                        if self.image_swap:
-                            await self.send_image_to_livekit()
-                        
+                        await self._handle_interruption()
                         break
+
+    async def _handle_tool_calls(self, tool_calls):
+        """Handle tool calls from the LLM"""
+        try:
+            for tool_call in tool_calls:
+                tool_name = tool_call["function"]["name"]
+                tool_args = json.loads(tool_call["function"]["arguments"])
+
+                # Execute tool call via MCP
+                result = await self.session.call_tool(tool_name, tool_args)
+                logger.info(f"Tool {tool_name} executed with result: {result}")
+
+                # Extract text content from MCP response
+                if hasattr(result, 'content') and result.content:
+                    if isinstance(result.content, list) and len(result.content) > 0:
+                        content_text = ""
+                        for content_item in result.content:
+                            if hasattr(content_item, 'text'):
+                                content_text += content_item.text
+                            elif isinstance(content_item, str):
+                                content_text += content_item
+                        tool_result_content = content_text
+                    elif hasattr(result.content, 'text'):
+                        tool_result_content = result.content.text
+                    else:
+                        tool_result_content = str(result.content)
+                elif isinstance(result, str):
+                    tool_result_content = result
+                else:
+                    tool_result_content = "Tool executed successfully"
+
+                # Add tool result to conversation history
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": tool_result_content
+                })
+
+        except Exception as e:
+            logger.error(f"Error handling tool calls: {e}")
+
+    async def _process_content_for_tts(self, content, is_on_dialogue, is_tts_started, 
+                                     past_quote_count, track_char_index, 
+                                     consecutive_narrative_chars, consecutive_dialogue_chars):
+        """Process content for TTS with dialogue/narrative detection"""
+        # Track quotation marks for dialogue/narrative detection
+        for char in content:
+            if char == '"':
+                past_quote_count += 1
+                was_on_dialogue = is_on_dialogue
+                is_on_dialogue = (past_quote_count % 2 == 1)
+                
+                if not was_on_dialogue and is_on_dialogue:
+                    # We're switching from narrative to dialogue, send sleep before dialogue
+                    if consecutive_narrative_chars > 0 or consecutive_dialogue_chars > 0:
+                        sleep_duration = consecutive_narrative_chars * 0.01 + consecutive_dialogue_chars * 0.065
+                        print(f"Sending sleep command: {consecutive_narrative_chars} chars = {sleep_duration:.3f}s")
+                        await self.publish_tts_text(f"[SLEEP] {sleep_duration}")
+                        consecutive_narrative_chars = 0
+                        consecutive_dialogue_chars = 0  # Reset counter
+                
+                elif was_on_dialogue and not is_on_dialogue:
+                    # We're switching from dialogue to narrative, Process any remaining tts buffer content
+                    if len(self.text_chunk_spliter.buffer) > 0:
+                        remaining_segments = (
+                            self.text_chunk_spliter.get_remaining_buffer()
+                        )
+                        for segment in remaining_segments:
+                            logger.info(f"clearing tts buffer when switching to narrative: {segment}")
+                            if not is_tts_started:
+                                is_tts_started = True
+                                await self.publish_tts_text("[START]")
+                            await self.publish_tts_text(segment)
+                    # Reset narrative counter when exiting dialogue
+                    consecutive_narrative_chars = 0
+                    is_tts_started = False
+                    await self.publish_tts_text("[DONE]")
+                
+                # Don't send [DONE] when switching modes - only send it when LLM response is complete
+                track_char_index += 1
+                
+            elif is_on_dialogue:
+                # We're in dialogue mode, send to TTS buffer
+                segments = self.text_chunk_spliter.process_chunk(char)
+                for segment in segments:
+                    if not is_tts_started:
+                        is_tts_started = True
+                        await self.publish_tts_text("[START]")
+                    await self.publish_tts_text(segment)
+                
+                track_char_index += 1
+                consecutive_dialogue_chars += 1
+            else:
+                # We're in narrative mode, count characters for timing
+                consecutive_narrative_chars += 1
+                track_char_index += 1
+                if is_tts_started:
+                    is_tts_started = False
+                    await self.publish_tts_text("[DONE]")
+        
+        # Return updated state variables
+        return is_on_dialogue, is_tts_started, past_quote_count, track_char_index, consecutive_narrative_chars, consecutive_dialogue_chars
+
+    async def _finalize_response(self, current_response, text):
+        """Finalize the response processing"""
+        # Process any remaining tts buffer content
+        remaining_segments = (
+            self.text_chunk_spliter.get_remaining_buffer()
+        )
+        for segment in remaining_segments:
+            logger.info(f"sending segment in final: {segment} \n")
+            await self.publish_tts_text(segment)
+
+        # Send [DONE] to TTS to close the text stream
+        await self.publish_tts_text("[DONE]")
+
+        # TTS tokens are now tracked in real-time via publish_text_livekit
+        logger.info(f"Total TTS characters sent: {self.current_usage['tts_tokens']}")
+
+        # Add assistant message to self.messages (single source of truth)
+        self.messages.append(
+            {"role": "assistant", "content": current_response}
+        )
+        logger.info(f"Current response: {current_response}")
+        print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
+        
+        # Save LLM response to database
+        try:
+            self.chat_session_manager.write_assistant_message(
+                user_id=self.user_id,
+                avatar_id=self.avatar_id,
+                content=current_response,
+                assistant_name=self.assistant_nickname or "Assistant",
+                model=self.model
+            )
+        except Exception as e:
+            logger.error(f"Failed to save LLM response to database: {e}")
+        
+        # Send DONE marker to frontend immediately via LiveKit
+        await self.publish_frontend_stream_livekit("DONE", "")
+        
+        # Send an image after the response is complete
+        if self.image_swap:
+            await self.send_image_to_livekit()
+
+    async def _handle_interruption(self):
+        """Handle user interruption"""
+        logger.warning("Stopping LLM stream due to user interruption.")
+        self.user_interrupting_flag = False
+        print("\n[INTERRUPTED]")
+        await self.publish_tts_text("[INTERRUPTED]")
+        
+        # Send INTERRUPTED marker to frontend immediately via LiveKit
+        await self.publish_frontend_stream_livekit("INTERRUPTED", "")
+        
+        # Send an image even when interrupted
+        if self.image_swap:
+            await self.send_image_to_livekit()
+
         if self.user_interrupting_flag:
             logger.warning(f"Skipping history appending due to user interruption")
         

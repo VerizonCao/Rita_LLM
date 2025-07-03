@@ -248,14 +248,14 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
         api.AccessToken()
         .with_identity(f"Avatar-{uuid.uuid4()}")
         .with_name("Avatar")
-        .with_attributes({"role": "agent-asr"})
+        .with_attributes({"role": "agent-avatar"})
         .with_grants(
             api.VideoGrants(
                 room_join=True,
                 room=room_name,
                 can_publish=True,
                 can_subscribe=True,
-                hidden=True,
+                # hidden=True,
             )
         )
         .to_jwt()
