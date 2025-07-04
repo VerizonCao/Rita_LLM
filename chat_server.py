@@ -18,18 +18,46 @@ async def generate_character_image(prompt: str) -> str:
     # """
 
     # version2 
-    """Generate a new character image based on the described scene or location.
+    # """Generate a new character image based on the described scene or location or character change motion
 
-    This tool should be called in the following situations:
-    1. When the user directly requests a new image or photo of the character.
-    2. When the conversation setting or location changes (even implicitly) — for example, if the user says "let's go to the bar" or "we're walking along the beach," generate a new image that reflects the new scene.
-    3. When the character's appearance is expected to change due to context (e.g., lighting, outfit, background, activity).
+    # This tool should be called in the following situations:
+    # 1. When the user directly requests a new image or photo of the character.
+    # 2. When the conversation setting or location changes (even implicitly) — for example, if the user says "let's go to the bar" or "we're walking along the beach,", generate a new image that reflects the new scene.
+    # 3. When the character's appearance is expected to change due to context (e.g., lighting, outfit, background, activity).
+    # 4. When the character is showing a new thing or it's changing it's pose.
 
-    Always generate a fresh image that reflects the latest described scene, setting, or activity.
-    Never generate more than 1 person in the image.
+    # Always generate a fresh image that reflects the latest described scene, setting, or activity.
+    # Never generate more than 1 person in the image.
+
+    # Args:
+    #     prompt: A description of the character and the current setting or scene (e.g., "the character is sitting in a dimly lit bar", "the character is walking along the beach at sunset").
+    # """
+
+    # version3
+    """Generate a new character image based on changes in scene, setting, or character action.
+
+    This tool should be called whenever a new visual representation of the character is needed due to contextual changes in the conversation.
+
+    Trigger this function in the following situations:
+    1. The user explicitly requests a new image or photo of the character.
+    2. The scene or location changes — either explicitly or implicitly. For example: 
+    - “Let's go to the house.”
+    - “We're walking in the park now.”
+    In these cases, generate an image that reflects the new setting.
+    3. The character begins or changes an activity or gesture. For example:
+    - “She's eating something.”
+    - “He waves goodbye.”
+    4. The character's appearance is expected to change based on context — including pose, background, lighting, outfit, or emotional expression.
+
+    Always:
+    - Generate a fresh image that reflects the most recent scene, setting, or activity described.
+    - Ensure the image contains **only one** character — never include more than one person.
 
     Args:
-        prompt: A description of the character and the current setting or scene (e.g., "the character is sitting in a dimly lit bar", "the character is walking along the beach at sunset").
+        prompt: A detailed description of the character and the current setting, action, or scene 
+                (e.g., “the character is sitting at a cafe table in the park,” 
+                “the character is eating ramen in a cozy indoor kitchen,” 
+                “the character is walking along the beach at sunset”).
     """
 
 
