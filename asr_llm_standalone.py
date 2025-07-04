@@ -545,6 +545,7 @@ class ASR_LLM_Manager:
         try:
             image_name = Path(image_path).name
             logger.info(f"Sending image: {image_name}")
+            print(f"Sending image: {image_name}")
             
             # Send the image file using LiveKit's send_file method
             info = await self.room.local_participant.send_file(
@@ -553,6 +554,7 @@ class ASR_LLM_Manager:
             )
             
             logger.info(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
+            print(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
             
         except Exception as e:
             logger.error(f"Error sending image to LiveKit: {e}")
@@ -914,9 +916,8 @@ class ASR_LLM_Manager:
                             "output_format": "jpg",
                             "go_fast": True
                         }
-                        image_path = "image_gen/" + time.strftime("%Y%m%d%H%M%S") + ".jpg"
-                        # Create test directory if it doesn't exist
-                        os.makedirs("image_gen", exist_ok=True)
+                        print("input params: ", input_params)
+                        image_path = f"/tmp/{time.strftime('%Y%m%d%H%M%S')}.jpg"
                         # Use the existing image generator instance
                         try:
                             run_flux_model(input_params, image_path, self.image_generator)

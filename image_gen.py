@@ -65,12 +65,14 @@ class ImageGenerator:
             prediction_id = prediction["id"]
             
             logger.info(f"Prediction created with ID: {prediction_id}")
+            print(f"Prediction created with ID: {prediction_id}")
             
             # Poll for completion
             result_url = self._poll_prediction(prediction_id)
             
             if result_url:
                 logger.info(f"Image generation completed: {result_url}")
+                print(f"Image generation completed: {result_url}")
                 return result_url
             else:
                 raise Exception("Image generation failed or timed out")
@@ -110,6 +112,7 @@ class ImageGenerator:
                     f.write(chunk)
             
             logger.info(f"Image saved to: {output_path}")
+            print(f"Image saved to: {output_path}")
             return output_path
             
         except requests.exceptions.RequestException as e:
