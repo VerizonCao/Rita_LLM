@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from typing import Optional
 import glob
 import random
+from image_gen import ImageGenerator, run_flux_model  # Add ImageGenerator import
 
 # MCP Client imports
 from mcp import ClientSession, StdioServerParameters
@@ -45,6 +46,7 @@ class ASR_LLM_Manager:
         room: rtc.Room = None,  # Add type hint for LiveKit room
         loop: asyncio.AbstractEventLoop = None,  # Add event loop parameter
         mcp_server_path: str = None,  # Add MCP server path parameter
+        image_url: str = None,
     ):
         
 
@@ -82,6 +84,7 @@ class ASR_LLM_Manager:
         self.tts_text_publisher_task = None
         # Image swap functionality
         self.image_swap = False  # Track image swap setting
+        self.image_url = None  # Track image URL
 
         # Token usage tracking
         self.current_usage = {
@@ -166,6 +169,15 @@ class ASR_LLM_Manager:
         # Image sending functionality, remove me when we are actually have images from genai. 
         self.test_images = self._load_test_images()
         self.current_image_index = 0
+        
+        # Initialize image generator
+        try:
+            if self.mcp_server_path:
+                self.image_generator = ImageGenerator()
+                logger.info("Image generator initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize image generator: {e}")
+            self.image_generator = None
 
     async def connect_to_mcp_server(self):
         """Connect to the MCP server"""
@@ -512,6 +524,38 @@ class ASR_LLM_Manager:
         else:
             print("Skipping text queuing during shutdown")
 
+
+
+    async def send_specific_image_to_livekit(self, image_path: str):
+        """
+        Send a specific image to the LiveKit data channel with topic 'image_file'
+        
+        Args:
+            image_path: Path to the image file to send
+        """
+        if self._is_shutting_down:
+            logger.warning("Skipping image send during shutdown")
+            return
+
+        if not self.room:
+            logger.error("No LiveKit room available for image sending")
+            return
+
+        try:
+            image_name = Path(image_path).name
+            logger.info(f"Sending image: {image_name}")
+            
+            # Send the image file using LiveKit's send_file method
+            info = await self.room.local_participant.send_file(
+                file_path=image_path,
+                topic="image_file",
+            )
+            
+            logger.info(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
+            
+        except Exception as e:
+            logger.error(f"Error sending image to LiveKit: {e}")
+
     async def publish_frontend_stream_livekit(self, stream_type, content):
         """
         Publish frontend streaming content directly to LiveKit data channel
@@ -851,12 +895,45 @@ class ASR_LLM_Manager:
                 else:
                     tool_result_content = "Tool executed successfully"
 
+                # append some explanation to the tool result
+                image_gen_prompt = None
+                if tool_name == "generate_character_image":
+                    image_gen_prompt = tool_result_content
+                    tool_result_content = f"Image generation requested with prompt: '{tool_result_content}'. Image generation would be triggered here."
+                
                 # Add tool result to conversation history
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
                     "content": tool_result_content
                 })
+
+                if image_gen_prompt:
+                    if self.image_url:
+                        print("sending image gen request")
+                        image_gen_prompt += ", [important]: never show more than 1 person in the image, and keep the character's face consistent with the original, matching facial features, and proportions as closely as possible"
+                        input_params = {
+                            "prompt": image_gen_prompt,
+                            "input_image": self.image_url,
+                            "aspect_ratio": "match_input_image",
+                            "output_format": "jpg",
+                            "go_fast": True
+                        }
+                        image_path = "image_gen/" + time.strftime("%Y%m%d%H%M%S") + ".jpg"
+                        # Create test directory if it doesn't exist
+                        os.makedirs("image_gen", exist_ok=True)
+                        # Use the existing image generator instance
+                        try:
+                            run_flux_model(input_params, image_path, self.image_generator)
+                            # after it's done, let's swap the image.
+                            await self.send_specific_image_to_livekit(image_path)
+                        except Exception as e:
+                            logger.error(f"Image generation failed: {e}")
+                            print(f"Image generation failed: {e}")
+                    else:
+                        print("no image url provided, skipping image gen")
+                
+                    
 
         except Exception as e:
             logger.error(f"Error handling tool calls: {e}")
@@ -962,8 +1039,8 @@ class ASR_LLM_Manager:
         await self.publish_frontend_stream_livekit("DONE", "")
         
         # Send an image after the response is complete
-        if self.image_swap:
-            await self.send_image_to_livekit()
+        # if self.image_swap:
+            # await self.send_image_to_livekit()
 
     async def _handle_interruption(self):
         """Handle user interruption"""
