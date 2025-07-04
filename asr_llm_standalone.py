@@ -736,11 +736,11 @@ class ASR_LLM_Manager:
                 "max_tokens": 1000,
                 "tools": openai_tools,
                 "provider": {
-                # 'require_parameters': True,
-                'order': 
-                [
-                    'baseten/fp8',
-                ]
+                    'require_parameters': True,
+                    'order': 
+                    [
+                        'baseten/fp8',
+                    ]
                 },
                 "usage": {"include": True}
             }
