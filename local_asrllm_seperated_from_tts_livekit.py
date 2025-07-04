@@ -37,17 +37,28 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         audio_track=None,
         room=None,
         loop=None,
+        image_swap=False,
+        image_url=None,
     ):
         self.is_speaking = False
         self.current_audio = []
         self.sample_rate = 24000
         self.status = status
         self.config = config  # Store config reference
-        self.asr_llm_manager = ASR_LLM_Manager(
-            llm_data=config.get_llm_tuple(),
-            room=room,
-            loop=loop,
-        )
+        if image_swap:
+            self.asr_llm_manager = ASR_LLM_Manager(
+                llm_data=config.get_llm_tuple(),
+                room=room,
+                loop=loop,
+                mcp_server_path='chat_server.py',
+                image_url=image_url,
+            )
+        else:
+            self.asr_llm_manager = ASR_LLM_Manager(
+                llm_data=config.get_llm_tuple(),
+                room=room,
+                loop=loop,
+            )
         self.processing_thread = None
         self.stop_processing = threading.Event()
         self.speech_end_time = 0
@@ -56,6 +67,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.room = room
         self.loop = loop
         self.current_temp_file = None  # Track the current temporary file
+        self.image_url = image_url
 
         self.text_input = None
         self.text_input_voice = []
@@ -246,6 +258,7 @@ def run_audio_capture_test(
     room = None,
     loop = None,
     image_swap=False,
+    image_url=None,
 ):
     audio_capture = None
 
@@ -257,9 +270,12 @@ def run_audio_capture_test(
             audio_track=audio_capture_wrapper.audio_track if audio_capture_wrapper else None,
             room=room,
             loop=loop,
+            image_swap=image_swap,
+            image_url=image_url,
         )
 
         event_handler.asr_llm_manager.image_swap = image_swap
+        event_handler.asr_llm_manager.image_url = image_url
 
         if use_silero_vad:
             logger.info("Using Silero VAD...")
@@ -333,10 +349,11 @@ def run_audio2audio_in_thread(
     room = None,
     loop = None,
     image_swap=False,
+    image_url=None,
 ):
     thread = threading.Thread(
         target=run_audio_capture_test,
-        args=(status, config, True, audio_play_locally, audio_capture_wrapper, room, loop, image_swap),
+        args=(status, config, True, audio_play_locally, audio_capture_wrapper, room, loop, image_swap, image_url),
         daemon=True,
     )
     thread.start()
