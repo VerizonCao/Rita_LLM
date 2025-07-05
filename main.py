@@ -81,7 +81,7 @@ def override_llm_properties(config: AliveInferenceConfig, override_config: dict)
     
     return old_llm_config, old_io_source_portrait_folder
 
-async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, image_swap: bool = False):
+async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, image_swap: bool = False, image_url: str = None):
     # Create a class to hold our state
     class RoomState:
         def __init__(self):
@@ -98,9 +98,11 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
             self.current_user_id = None  # Track current user ID
             self.current_avatar_id = None  # Track current avatar ID
             self.image_swap = False  # Track image swap setting
+            self.image_url = None  # Track image URL
 
     state = RoomState()
     state.image_swap = image_swap
+    state.image_url = image_url
     loop = asyncio.get_event_loop()  # Get the current event loop
 
     # Override LLM properties if provided
@@ -122,6 +124,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
         room=room,  # Pass the room to the wrapper
         loop=loop,  # Pass the event loop to the wrapper
         image_swap=state.image_swap,
+        image_url=state.image_url,
     )
 
     @room.on("participant_connected")
@@ -477,7 +480,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
 
     return state  # Return the state object
 
-def run_async_room_connection(room_name: str, llm_overrides: dict = None, image_swap: bool = False):
+def run_async_room_connection(room_name: str, llm_overrides: dict = None, image_swap: bool = False, image_url: str = None):
     """Wrapper function to run async function in a thread"""
     print("start running the room connection!")
 
@@ -510,7 +513,7 @@ def run_async_room_connection(room_name: str, llm_overrides: dict = None, image_
     async def run_with_cleanup():
         nonlocal state
         try:
-            state = await main_room(room, room_name, llm_overrides, image_swap)
+            state = await main_room(room, room_name, llm_overrides, image_swap, image_url)
         finally:
             await cleanup()
             # Stop the event loop when we're done
@@ -564,17 +567,22 @@ def handler(event, context):
             if isinstance(image_swap, str):
                 image_swap = image_swap.lower() == "true"
             
+            # Get image_url parameter
+            image_url = event.get("image_url", None)
+            
             print(f"Starting room connection for room: {room_name}")
             print(f"Image swap setting: {image_swap}")
+            print(f"Image URL: {image_url}")
             # Direct call since run_async_room_connection manages its own event loop
-            run_async_room_connection(room_name, llm_properties, image_swap)
+            run_async_room_connection(room_name, llm_properties, image_swap, image_url)
             return {
                 "statusCode": 200,
                 "body": json.dumps({
                     "message": "Room connection started successfully",
                     "room_name": room_name,
                     "applied_properties": llm_properties if llm_properties else None,
-                    "image_swap": image_swap
+                    "image_swap": image_swap,
+                    "image_url": image_url
                 })
             }
 
@@ -598,10 +606,14 @@ def handler(event, context):
                 if isinstance(image_swap, str):
                     image_swap = image_swap.lower() == "true"
                 
+                # Get image_url parameter
+                image_url = body.get("image_url", None)
+                
                 print(f"Starting room connection for room: {room_name}")
                 print(f"Image swap setting: {image_swap}")
+                print(f"Image URL: {image_url}")
                 # Direct call since run_async_room_connection manages its own event loop
-                run_async_room_connection(room_name, llm_properties, image_swap)
+                run_async_room_connection(room_name, llm_properties, image_swap, image_url)
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON from record: {str(e)}")
                 continue
@@ -723,6 +735,7 @@ if __name__ == "__main__":
     parser.add_argument('--room', type=str, default='test-room', help='Name of the room to connect to')
     parser.add_argument('--properties', type=str, help='JSON string containing LLM properties')
     parser.add_argument('--image-swap', action='store_true', help='Enable image swap functionality')
+    parser.add_argument('--image-url', type=str, help='URL of the image to use')
     args = parser.parse_args()
     
     llm_properties = None
@@ -745,4 +758,5 @@ if __name__ == "__main__":
             exit(1)
     
     print(f"Image swap setting: {args.image_swap}")
-    run_async_room_connection(args.room, llm_properties, args.image_swap)
+    print(f"Image URL: {args.image_url}")
+    run_async_room_connection(args.room, llm_properties, args.image_swap, args.image_url)

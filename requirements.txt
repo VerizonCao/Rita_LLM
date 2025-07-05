@@ -27,4 +27,7 @@ opentelemetry-api>=1.22.0
 opentelemetry-sdk>=1.22.0
 opentelemetry-exporter-otlp
 
+mcp==1.10.1
+replicate==1.0.7
+
 

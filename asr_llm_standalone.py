@@ -12,9 +12,10 @@ from livekit import rtc  # Add LiveKit import
 from livekit.rtc import TextStreamWriter  # Add TextStreamWriter import
 import asyncio
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, List
 import glob
 import random
+from typing import Dict
 
 # Add project root to Python path
 project_root = Path(__file__).resolve().parent.parent.parent
@@ -22,6 +23,9 @@ sys.path.append(str(project_root))
 
 # Import chat system
 from data import ChatSessionManager
+
+# Import world agent
+from world_agent import WorldAgent
 
 # Configure logging
 logging.basicConfig(
@@ -39,6 +43,8 @@ class ASR_LLM_Manager:
         llm_data: tuple = None,
         room: rtc.Room = None,  # Add type hint for LiveKit room
         loop: asyncio.AbstractEventLoop = None,  # Add event loop parameter
+        image_swap: bool = False,  # Enable image swap and world agent
+        image_url: str = None,  # Base image URL for world agent
     ):
         # Initialize Deepinfra client for Whisper ASR
         self.openai_client = OpenAI(
@@ -57,8 +63,11 @@ class ASR_LLM_Manager:
         # Text publishing queue for non-blocking operation
         self.tts_text_queue = asyncio.Queue()
         self.tts_text_publisher_task = None
-        # Image swap functionality
-        self.image_swap = False  # Track image swap setting
+        # Image swap functionality and world agent integration
+        self.image_swap = image_swap  # Track image swap setting
+        
+        # World agent integration (enabled when image_swap is True)
+        self.world_agent = None
 
         # Token usage tracking
         self.current_usage = {
@@ -108,6 +117,21 @@ class ASR_LLM_Manager:
             conversation_context=conversation_context,
         )
         self.system_prompt = system_prompt_obj.get_system_prompt()
+
+        # World agent integration (enabled when image_swap is True)
+        if self.image_swap:
+            try:
+                self.world_agent = WorldAgent(
+                    character_system_prompt=self.system_prompt,
+                    mcp_server_path="chat_server.py",  # Fixed MCP server path
+                    image_url=image_url,
+                    room=room,
+                    loop=loop
+                )
+                logger.info("World agent initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize world agent: {e}")
+                self.world_agent = None
 
         # Initialize messages with system prompt (always first, not stored in DB)
         self.messages = [
@@ -369,6 +393,15 @@ class ASR_LLM_Manager:
                 finally:
                     self.room = None
 
+            # Cleanup world agent
+            if self.world_agent:
+                try:
+                    await self.world_agent.cleanup()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up world agent: {e}")
+                finally:
+                    self.world_agent = None
+
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
         finally:
@@ -506,6 +539,52 @@ class ASR_LLM_Manager:
             dict: Complete token usage including prompt, completion, total, TTS, and cost
         """
         return self.current_usage.copy()
+
+    def get_recent_messages(self, count: int = 6) -> List[Dict[str, str]]:
+        """
+        Get the last N messages from the conversation (excluding system prompt).
+        
+        Args:
+            count: Number of recent messages to return (default: 6)
+            
+        Returns:
+            List of recent message dictionaries
+        """
+        # Skip the system prompt (first message) and get the last N messages
+        recent_messages = self.messages[1:][-count:] if len(self.messages) > 1 else []
+        return recent_messages
+
+    async def trigger_world_agent_analysis(self):
+        """
+        Trigger world agent analysis after a new message is added.
+        This should be called after the assistant message is added to self.messages.
+        """
+        if not self.image_swap or not self.world_agent:
+            logger.debug("World agent analysis skipped - image_swap disabled or world_agent not available")
+            return
+            
+        try:
+            logger.info("World agent analysis starting...")
+            # Get the last 6 messages for context
+            recent_messages = self.get_recent_messages(6)
+            
+            if recent_messages:
+                logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
+                
+                # Process the conversation update with world agent
+                image_generated = await self.world_agent.process_conversation_update(recent_messages)
+                
+                if image_generated:
+                    logger.info("World agent successfully generated and sent an image")
+                else:
+                    logger.debug("World agent decided no image generation was needed")
+            else:
+                logger.warning("No recent messages found for world agent analysis")
+                    
+        except Exception as e:
+            logger.error(f"Error triggering world agent analysis: {e}")
+        finally:
+            logger.info("World agent analysis completed")
     
     
     def replace_special_quotes_to_straight_quotes(self, input_prompt: str) -> str:
@@ -641,10 +720,11 @@ class ASR_LLM_Manager:
                             # Send DONE marker to frontend immediately via LiveKit
                             await self.publish_frontend_stream_livekit("DONE", "")
                             
-                            # Send an image after the response is complete
-                            if self.image_swap:
-                                await self.send_image_to_livekit()
-                            
+                            # Trigger world agent analysis after assistant message is added (non-blocking)
+                            logger.info("Starting world agent analysis in background task")
+                            asyncio.create_task(self.trigger_world_agent_analysis())
+                            logger.info("World agent analysis task created, continuing with TTS flow")
+                                                        
                             break
 
                         try:
@@ -744,9 +824,7 @@ class ASR_LLM_Manager:
                         # Send INTERRUPTED marker to frontend immediately via LiveKit
                         await self.publish_frontend_stream_livekit("INTERRUPTED", "")
                         
-                        # Send an image even when interrupted
-                        if self.image_swap:
-                            await self.send_image_to_livekit()
+                        # World agent handles image generation and sending (no legacy image swap)
                         
                         break
         if self.user_interrupting_flag:
