@@ -318,6 +318,30 @@ Keep your analysis brief and focused."""
             logger.error(f"Error in direct OpenRouter analysis: {e}")
             return None
 
+    async def publish_frontend_stream_livekit(self, stream_type, content):
+        """
+        Publish frontend streaming content directly to LiveKit data channel
+        """
+        if self._is_shutting_down:
+            logger.warning("Skipping frontend stream publish during shutdown")
+            return
+
+        if not self.room:
+            logger.error("No LiveKit room available for frontend streaming")
+            return
+
+        try:
+            await self.room.local_participant.publish_data(
+                json.dumps({
+                    "topic": "frontend_stream",
+                    "type": stream_type,
+                    "text": content
+                })
+            )
+            logger.debug(f"Published frontend stream: {stream_type} - {content[:50] if content else 'N/A'}")
+        except Exception as e:
+            logger.error(f"Error publishing frontend stream to LiveKit: {e}")
+
     async def generate_and_send_image(self, prompt: str) -> bool:
         """
         Generate an image using the provided prompt and send it via LiveKit.
@@ -338,6 +362,10 @@ Keep your analysis brief and focused."""
 
         try:
             logger.info(f"Generating image with prompt: {prompt}")
+            
+            # Send IMAGE_START signal to frontend
+            await self.publish_frontend_stream_livekit("IMAGE_START", "")
+            logger.info("Sent IMAGE_START signal to frontend")
             
             # Add important constraints to the prompt
             enhanced_prompt = (
@@ -371,16 +399,33 @@ Keep your analysis brief and focused."""
                 # Send the generated image via LiveKit
                 if self.room:
                     await self._send_image_to_livekit(image_path)
+                    
+                    # Send IMAGE_END signal to frontend after successful image generation and sending
+                    await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                    logger.info("Sent IMAGE_END signal to frontend")
+                    
                     return True
                 else:
                     logger.warning("No LiveKit room available for sending image")
+                    # Send IMAGE_END signal even if room is not available
+                    await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                    logger.info("Sent IMAGE_END signal to frontend (no room available)")
                     return False
             else:
                 logger.error("Image generation failed - no output URL received")
+                # Send IMAGE_END signal even if generation failed
+                await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                logger.info("Sent IMAGE_END signal to frontend (generation failed)")
                 return False
                 
         except Exception as e:
             logger.error(f"Error generating and sending image: {e}")
+            # Send IMAGE_END signal even if there was an exception
+            try:
+                await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                logger.info("Sent IMAGE_END signal to frontend (exception occurred)")
+            except Exception as signal_error:
+                logger.error(f"Error sending IMAGE_END signal: {signal_error}")
             return False
 
     async def _send_image_to_livekit(self, image_path: str):
