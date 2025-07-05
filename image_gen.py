@@ -35,11 +35,16 @@ class ImageGenerator:
                 - prompt_upsampling: Boolean (optional)
                 - seed: Random seed (optional)
                 - safety_tolerance: Safety tolerance (optional)
+                - disable_safety_checker: Disable NSFW safety checker (optional)
         
         Returns:
             URL of the generated image
         """
         try:
+            # Enable NSFW content by default
+            if 'disable_safety_checker' not in input_params:
+                input_params['disable_safety_checker'] = True
+            
             # Create the prediction request
             payload = {
                 "version": self.model_version,
