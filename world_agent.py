@@ -46,6 +46,10 @@ class WorldAgent:
         image_url: str = None,
         room=None,  # LiveKit room for sending images
         loop: asyncio.AbstractEventLoop = None,
+        chat_session_manager=None,  # Chat session manager for saving image URLs
+        user_id: str = None,  # User ID for database operations
+        avatar_id: str = None,  # Avatar ID for database operations
+        assistant_name: str = "Assistant",  # Assistant name for database operations
     ):
         self.character_system_prompt = character_system_prompt
         self.mcp_server_path = mcp_server_path
@@ -53,6 +57,12 @@ class WorldAgent:
         self.room = room
         self.loop = loop
         self._is_shutting_down = False  # Add shutdown flag
+        
+        # Database integration for saving image URLs
+        self.chat_session_manager = chat_session_manager
+        self.user_id = user_id
+        self.avatar_id = avatar_id
+        self.assistant_name = assistant_name
         
         # Character appearance tracking
         self.current_character_appearance = None  # Stores the last image generation prompt
@@ -342,6 +352,33 @@ Keep your analysis brief and focused."""
         except Exception as e:
             logger.error(f"Error publishing frontend stream to LiveKit: {e}")
 
+    async def publish_image_url_livekit(self, image_url: str):
+        """
+        Publish image URL via frontend_stream data channel
+        
+        Args:
+            image_url: The URL of the generated image
+        """
+        if self._is_shutting_down:
+            logger.warning("Skipping image URL publish during shutdown")
+            return
+
+        if not self.room:
+            logger.error("No LiveKit room available for image URL publishing")
+            return
+
+        try:
+            await self.room.local_participant.publish_data(
+                json.dumps({
+                    "topic": "frontend_stream",
+                    "type": "IMAGE_URL",
+                    "imageUrl": image_url
+                })
+            )
+            logger.info(f"Published image URL to frontend: {image_url}")
+        except Exception as e:
+            logger.error(f"Error publishing image URL to LiveKit: {e}")
+
     async def generate_and_send_image(self, prompt: str) -> bool:
         """
         Generate an image using the provided prompt and send it via LiveKit.
@@ -396,7 +433,29 @@ Keep your analysis brief and focused."""
                 # Update character appearance with the successful prompt
                 self._update_character_appearance(prompt)
                 
-                # Send the generated image via LiveKit
+                # Save image URL to database FIRST (before sending to frontend)
+                if self.chat_session_manager and self.user_id and self.avatar_id:
+                    try:
+                        # Create a message with the image URL
+                        self.chat_session_manager.write_assistant_message_with_image(
+                            user_id=self.user_id,
+                            avatar_id=self.avatar_id,
+                            content=f"Generated image: {prompt}",
+                            imageUrl=output_url,
+                            assistant_name=self.assistant_name,
+                            model="world_agent_image_generation"
+                        )
+                        logger.info(f"Saved image URL to database: {output_url}")
+                    except Exception as e:
+                        logger.error(f"Failed to save image URL to database: {e}")
+                else:
+                    logger.warning("Chat session manager not available, skipping database save")
+                
+                # Send the image URL via frontend_stream data channel AFTER database write is complete
+                await self.publish_image_url_livekit(output_url)
+                logger.info("Sent image URL to frontend via frontend_stream")
+                
+                # Send the generated image file via LiveKit (keeping existing functionality)
                 if self.room:
                     await self._send_image_to_livekit(image_path)
                     
@@ -406,7 +465,7 @@ Keep your analysis brief and focused."""
                     
                     return True
                 else:
-                    logger.warning("No LiveKit room available for sending image")
+                    logger.warning("No LiveKit room available for sending image file")
                     # Send IMAGE_END signal even if room is not available
                     await self.publish_frontend_stream_livekit("IMAGE_END", "")
                     logger.info("Sent IMAGE_END signal to frontend (no room available)")

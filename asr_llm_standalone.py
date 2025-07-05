@@ -126,7 +126,11 @@ class ASR_LLM_Manager:
                     mcp_server_path="chat_server.py",  # Fixed MCP server path
                     image_url=image_url,
                     room=room,
-                    loop=loop
+                    loop=loop,
+                    chat_session_manager=self.chat_session_manager,
+                    user_id=self.user_id,
+                    avatar_id=self.avatar_id,
+                    assistant_name=self.assistant_nickname or "Assistant"
                 )
                 logger.info("World agent initialized successfully")
             except Exception as e:

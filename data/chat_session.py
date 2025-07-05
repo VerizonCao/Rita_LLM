@@ -66,10 +66,14 @@ class ChatSessionManager:
             # Convert to LLM format (role + content only)
             llm_messages = []
             for msg in messages:
-                llm_messages.append({
+                message_dict = {
                     'role': msg.role,
                     'content': msg.content
-                })
+                }
+                # Include imageUrl if present
+                if hasattr(msg, 'imageUrl') and msg.imageUrl:
+                    message_dict['imageUrl'] = msg.imageUrl
+                llm_messages.append(message_dict)
             
             return llm_messages
             
@@ -181,5 +185,37 @@ class ChatSessionManager:
             sender_id=avatar_id,
             sender_name=assistant_name,
             model=model
+        )
+        return self.write_message(user_id, avatar_id, assistant_message)
+    
+    def write_assistant_message_with_image(
+        self, 
+        user_id: str, 
+        avatar_id: str, 
+        content: str, 
+        imageUrl: str,
+        assistant_name: str = "Assistant",
+        model: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Convenience method to write an assistant message with an image URL.
+        
+        Args:
+            user_id: User identifier
+            avatar_id: Avatar identifier
+            content: Message content
+            imageUrl: URL of the generated image
+            assistant_name: Assistant display name
+            model: LLM model used
+            
+        Returns:
+            Session ID if successful, None otherwise
+        """
+        assistant_message = AssistantMessage(
+            content=content,
+            sender_id=avatar_id,
+            sender_name=assistant_name,
+            model=model,
+            imageUrl=imageUrl
         )
         return self.write_message(user_id, avatar_id, assistant_message) 
