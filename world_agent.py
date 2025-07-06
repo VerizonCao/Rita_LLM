@@ -352,12 +352,13 @@ Keep your analysis brief and focused."""
         except Exception as e:
             logger.error(f"Error publishing frontend stream to LiveKit: {e}")
 
-    async def publish_image_url_livekit(self, image_url: str):
+    async def publish_image_url_livekit(self, image_url: str, content: str = None):
         """
-        Publish image URL via frontend_stream data channel
+        Publish image URL and content via frontend_stream data channel
         
         Args:
             image_url: The URL of the generated image
+            content: The text content to display with the image
         """
         if self._is_shutting_down:
             logger.warning("Skipping image URL publish during shutdown")
@@ -368,13 +369,17 @@ Keep your analysis brief and focused."""
             return
 
         try:
-            await self.room.local_participant.publish_data(
-                json.dumps({
-                    "topic": "frontend_stream",
-                    "type": "IMAGE_URL",
-                    "imageUrl": image_url
-                })
-            )
+            data = {
+                "topic": "frontend_stream",
+                "type": "IMAGE_URL",
+                "imageUrl": image_url
+            }
+            
+            # Add content if provided
+            if content:
+                data["text"] = content
+                
+            await self.room.local_participant.publish_data(json.dumps(data))
             logger.info(f"Published image URL to frontend: {image_url}")
         except Exception as e:
             logger.error(f"Error publishing image URL to LiveKit: {e}")
@@ -452,7 +457,7 @@ Keep your analysis brief and focused."""
                     logger.warning("Chat session manager not available, skipping database save")
                 
                 # Send the image URL via frontend_stream data channel AFTER database write is complete
-                await self.publish_image_url_livekit(output_url)
+                await self.publish_image_url_livekit(output_url, f"Generated image: {prompt}")
                 logger.info("Sent image URL to frontend via frontend_stream")
                 
                 # Send the generated image file via LiveKit (keeping existing functionality)
