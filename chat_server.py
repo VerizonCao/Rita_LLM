@@ -5,49 +5,53 @@ from mcp.server.fastmcp import FastMCP
 # Initialize FastMCP server
 mcp = FastMCP("character-image-generator")
 
+
 @mcp.tool()
 async def generate_character_image(prompt: str) -> str:
- 
     """
-    Generate a new character image based on noticeable changes in scene, setting, or character action.
+    Generate a new character image when there is a meaningful visual change in the scene, setting, or the character's appearance or action — but only when appropriate.
 
-    This tool should be called when a new visual representation of the character is helpful due to a change in the context of the conversation.
+    This tool should only be called when a new image would *clearly enhance* the user's visual understanding of the current situation.
 
-    Trigger this function in the following situations:
-    1. The user explicitly requests a new image or photo of the character.
-    2. The scene or location changes — either explicitly or implicitly. For example: 
-    - “Let's go to the house.”
-    - “We're walking in the park now.”
-    In these cases, generate an image that reflects the new setting, unless the change is extremely minor or does not affect the visual scene.
-    3. The character begins or changes an activity or gesture that visually affects the scene. For example:
-    - “She's eating something.”
-    - “He waves goodbye.”
-    Skip generation if the change is very subtle and doesn't significantly alter the visual.
-    4. The character's appearance is expected to change based on context — including pose, background, lighting, outfit, or emotional expression.
+    **Trigger this function only in the following cases:**
 
-    Always:
-    - Generate a fresh image that reflects the current setting or activity, when it visually impacts the scene.
-    - Ensure the image contains **only one** character — never include more than one person.
+    1. **User explicitly requests a photo or image of the character.**
+    - If the character has refused or declined to show an image, do **not** call this tool. Always respect the character's stated consent.
+
+    2. **The scene or location changes in a way that would visually alter the background or setting.**
+    - Examples: “Let’s go to the house.” / “We’re walking in the park now.”
+    - *Skip generation if the change is minimal or does not noticeably impact the visual scene.*
+
+    3. **The character begins a new action, gesture, or pose that meaningfully alters the visual.**
+    - Examples: “She’s eating noodles.” / “He’s dancing under the streetlight.”
+    - Do not trigger for small or subtle changes like blinking, turning slightly, or changing tone of voice.
+
+    4. **The character’s appearance is clearly affected by context.**
+    - This includes major pose shifts, emotional expressions, outfit changes, lighting conditions, or scene mood shifts.
+
+    **Always:**
+    - Generate only if the new image meaningfully improves the visual representation.
+    - Never show more than one person in the image.
+    - Avoid redundant or overly frequent generations — especially when the scene hasn’t changed.
 
     Args:
-        prompt: A detailed description of the character and the current setting, action, or scene 
-                (e.g., “the character is sitting at a cafe table in the park,” 
-                “the character is eating ramen in a cozy indoor kitchen,” 
-                “the character is walking along the beach at sunset”).
+        prompt: A clear, detailed description of the character and the current visual context — including location, action, expression, and relevant atmosphere.
+        Example prompts:
+            - “The character is sitting at a sunny cafe patio, sipping tea.”
+            - “The character is cooking ramen in a small cozy kitchen
     """
-
-
 
     # This is a placeholder implementation
     # In a real implementation, this would call an image generation API
     # such as DALL-E, Midjourney, or Stable Diffusion
     print(f"Generating character image with prompt: {prompt}")
-    
+
     # For now, just acknowledge the request
     # return f"Character image generation requested with prompt: '{prompt}'. Image generation would be triggered here."
-    return prompt  # we just return prompt, so it's easy to send to image generator. But for llm resp, we will add the above info. 
+    return prompt  # we just return prompt, so it's easy to send to image generator. But for llm resp, we will add the above info.
+
 
 if __name__ == "__main__":
     # Initialize and run the server
     print("Starting the MCP character image generator server...")
-    mcp.run(transport='stdio')
+    mcp.run(transport="stdio")
