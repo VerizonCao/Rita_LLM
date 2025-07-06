@@ -27,7 +27,8 @@ class ChatMessage(ABC):
         created_at: Optional[datetime] = None,
         deleted: bool = False,
         filtered: bool = False,
-        context: int = -1
+        context: int = -1,
+        imageUrl: Optional[str] = None
     ):
         """
         Initialize chat message.
@@ -42,6 +43,7 @@ class ChatMessage(ABC):
             deleted: Whether message is deleted
             filtered: Whether message is filtered
             context: Context index for the message
+            imageUrl: URL for image messages (optional)
         """
         self.id = message_id or generate_short_id()
         self.content = content
@@ -52,10 +54,11 @@ class ChatMessage(ABC):
         self.deleted = deleted
         self.filtered = filtered
         self.context = context
+        self.imageUrl = imageUrl
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary for JSON serialization."""
-        return {
+        result = {
             "id": self.id,
             "content": self.content,
             "role": self.role,
@@ -66,6 +69,9 @@ class ChatMessage(ABC):
             "filtered": self.filtered,
             "context": self.context
         }
+        if self.imageUrl:
+            result["imageUrl"] = self.imageUrl
+        return result
     
     def to_json(self) -> str:
         """Convert message to JSON string."""
@@ -100,7 +106,8 @@ class UserMessage(ChatMessage):
         created_at: Optional[datetime] = None,
         deleted: bool = False,
         filtered: bool = False,
-        context: int = -1
+        context: int = -1,
+        imageUrl: Optional[str] = None
     ):
         """Initialize user message."""
         super().__init__(
@@ -112,7 +119,8 @@ class UserMessage(ChatMessage):
             created_at=created_at,
             deleted=deleted,
             filtered=filtered,
-            context=context
+            context=context,
+            imageUrl=imageUrl
         )
     
     @classmethod
@@ -130,7 +138,8 @@ class UserMessage(ChatMessage):
             created_at=created_at,
             deleted=data.get('deleted', False),
             filtered=data.get('filtered', False),
-            context=data.get('context', -1)
+            context=data.get('context', -1),
+            imageUrl=data.get('imageUrl')
         )
 
 class AssistantMessage(ChatMessage):
@@ -148,7 +157,8 @@ class AssistantMessage(ChatMessage):
         created_at: Optional[datetime] = None,
         deleted: bool = False,
         filtered: bool = False,
-        context: int = -1
+        context: int = -1,
+        imageUrl: Optional[str] = None
     ):
         """
         Initialize assistant message.
@@ -175,7 +185,8 @@ class AssistantMessage(ChatMessage):
             created_at=created_at,
             deleted=deleted,
             filtered=filtered,
-            context=context
+            context=context,
+            imageUrl=imageUrl
         )
         self.model = model
         self.prompt_tokens = prompt_tokens
@@ -209,7 +220,8 @@ class AssistantMessage(ChatMessage):
             created_at=created_at,
             deleted=data.get('deleted', False),
             filtered=data.get('filtered', False),
-            context=data.get('context', -1)
+            context=data.get('context', -1),
+            imageUrl=data.get('imageUrl')
         )
 
 def parse_messages_from_jsonb(jsonb_data: Union[str, list]) -> List[ChatMessage]:
