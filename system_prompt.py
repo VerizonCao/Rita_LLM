@@ -10,11 +10,16 @@ class LLM_System_Prompt:
     ):
         self.assistant_name = assistant_name
         self.assistant_bio = assistant_bio
-        self.assistant_additional_characteristics = assistant_additional_characteristics
         self.user_name = user_name
         self.user_bio = user_bio
         self.conversation_context = conversation_context
         self.system_prompt = ""
+        
+        # Handle placeholders in assistant_additional_characteristics
+        self.assistant_additional_characteristics = assistant_additional_characteristics
+        if self.assistant_additional_characteristics:
+            self.assistant_additional_characteristics = self.assistant_additional_characteristics.replace("{{user}}", self.user_name)
+            self.assistant_additional_characteristics = self.assistant_additional_characteristics.replace("{{char}}", self.assistant_name)
         
 
         # === Character Identity & Immersion ===
