@@ -9,46 +9,69 @@ mcp = FastMCP("character-image-generator")
 @mcp.tool()
 async def generate_character_image(prompt: str) -> str:
     """
-    Generate a new character image when there is a meaningful visual change in the scene, setting, or the character's appearance or action — but only when appropriate.
+    Generate a new image of the character with carefully constrained visual logic.
 
-    This tool should only be called when a new image would *clearly enhance* the user's visual understanding of the current situation.
+    This tool should only be called when there is a meaningful change in the visual scene,
+    setting, outfit, pose, or background context.
 
-    **Trigger this function only in the following cases:**
+    **Trigger this function in these cases:**
 
-    1. **User explicitly requests a photo or image of the character.**
-    - If the character has refused or declined to show an image, do **not** call this tool. Always respect the character's stated consent.
+    1. The user explicitly asks for a new image or picture of the character.
+    2. The scene or location clearly changes (e.g., "They arrive at the beach", "We’re in the garden now").
+    3. The character’s outfit or hair has changed.
+    4. The character begins an action or gesture that visually alters their pose.
+    5. The emotional tone or lighting of the environment significantly shifts.
 
-    2. **The scene or location changes in a way that would visually alter the background or setting.**
-    - Examples: “Let’s go to the house.” / “We’re walking in the park now.”
-    - *Skip generation if the change is minimal or does not noticeably impact the visual scene.*
+    **Never call this if:**
+    - The change is only verbal or minor (e.g., blinking, looking sideways).
+    - The scene remains visually similar.
+    - The character has not consented to be shown.
 
-    3. **The character begins a new action, gesture, or pose that meaningfully alters the visual.**
-    - Examples: “She’s eating noodles.” / “He’s dancing under the streetlight.”
-    - Do not trigger for small or subtle changes like blinking, turning slightly, or changing tone of voice.
+    **Prompt Template (LLM must follow this format strictly):**
 
-    4. **The character’s appearance is clearly affected by context.**
-    - This includes major pose shifts, emotional expressions, outfit changes, lighting conditions, or scene mood shifts.
+    Generate an image of the character with the following constraints:
 
-    **Always:**
-    - Generate only if the new image meaningfully improves the visual representation.
-    - Never show more than one person in the image.
-    - Avoid redundant or overly frequent generations — especially when the scene hasn’t changed.
+    - **Clothing & Outfit**: [Unchanged or describe new outfit in detail, e.g., "A pair of loose jeans, a tank top, and a pink hat."]
+    - **Haircut and Color**: [Unchanged or describe new hairstyle and/or color, e.g., "Curly hair, pink-colored."]
+    - **Facial Features**: Always keep facial features unchanged. Match original face structure, proportions, and identity.
+    - **Facial Expression**: [Typically unchanged, but very subtle changes like "a subtle smile" or "slightly raised eyebrow" are allowed.]
+    - **Body Size**: Unchanged.
+    - **Background**: [Context-driven. Vividly describe if changed, e.g., "A flourishing garden lies behind her."]
+    - **Color Tone**: Keep unchanged.
+    - **Image Style**: Keep unchanged.
+    - **Action and Props**: [Only if visually relevant, e.g., "Standing barefoot on the sand, one hand shielding eyes from the sun."]
 
-    Args:
-        prompt: A clear, detailed description of the character and the current visual context — including location, action, expression, and relevant atmosphere.
-        Example prompts:
-            - “The character is sitting at a sunny cafe patio, sipping tea.”
-            - “The character is cooking ramen in a small cozy kitchen
+    **⚠ Rules:**
+    - Do NOT include more than one person in the image.
+    - DO NOT exaggerate expressions or change the face.
+    - Only generate if the scene meaningfully benefits from it.
+
+    📸 Example 1:
+    Clothing & Outfit: A pair of loose jeans, a tank top, and a pink hat.
+    Haircut and Color: Pink-colored hair, styled in soft curls.
+    Facial Features: Unchanged — match original facial structure and identity.
+    Facial Expression: A subtle smile.
+    Body Size: Unchanged.
+    Background: A flourishing garden lies behind her, filled with vibrant flowers and winding stone paths.
+    Color Tone: Unchanged.
+    Image Style: Unchanged.
+    Action and Props: Sitting on a stone bench, gently holding a teacup with both hands.
+
+    📸 Example 2:
+    Clothing & Outfit: Unchanged.
+    Haircut and Color: Curly hair, color unchanged.
+    Facial Features: Unchanged — retain the original look.
+    Facial Expression: Unchanged.
+    Body Size: Unchanged.
+    Background: The waves washed the beach, and there were scattered shells along the shoreline.
+    Color Tone: Unchanged.
+    Image Style: Unchanged.
+    Action and Props: Standing barefoot on the sand, one hand shielding eyes from the sun, looking out toward the ocean.
     """
 
     # This is a placeholder implementation
-    # In a real implementation, this would call an image generation API
-    # such as DALL-E, Midjourney, or Stable Diffusion
     print(f"Generating character image with prompt: {prompt}")
-
-    # For now, just acknowledge the request
-    # return f"Character image generation requested with prompt: '{prompt}'. Image generation would be triggered here."
-    return prompt  # we just return prompt, so it's easy to send to image generator. But for llm resp, we will add the above info.
+    return prompt
 
 
 if __name__ == "__main__":
