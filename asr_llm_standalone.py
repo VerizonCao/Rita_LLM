@@ -546,17 +546,36 @@ class ASR_LLM_Manager:
 
     def get_recent_messages(self, count: int = 6) -> List[Dict[str, str]]:
         """
-        Get the last N messages from the conversation (excluding system prompt).
-        
-        Args:
-            count: Number of recent messages to return (default: 6)
-            
-        Returns:
-            List of recent message dictionaries
+        Get the last `count` non-image messages (user/assistant dialogue only).
+        Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field or model == 'world_agent_image_generation').
         """
-        # Skip the system prompt (first message) and get the last N messages
-        recent_messages = self.messages[1:][-count:] if len(self.messages) > 1 else []
-        return recent_messages
+        def is_dialogue_message(msg):
+            # Exclude if message has an imageUrl (image bubble)
+            if 'imageUrl' in msg and msg['imageUrl']:
+                return False
+            # Exclude if model is world_agent_image_generation (image bubble)
+            if msg.get('model') == 'world_agent_image_generation':
+                return False
+            return True
+
+        filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
+        return filtered[-count:]
+
+    def get_filtered_messages_for_llm(self) -> List[Dict[str, str]]:
+        """
+        Get messages filtered for the character LLM (exclude image bubbles).
+        This prevents the LLM from learning to mimic image generation prompts.
+        """
+        def is_dialogue_message(msg):
+            # Exclude if message has an imageUrl (image bubble)
+            if 'imageUrl' in msg and msg['imageUrl']:
+                return False
+            # Exclude if model is world_agent_image_generation (image bubble)
+            if msg.get('model') == 'world_agent_image_generation':
+                return False
+            return True
+
+        return [msg for msg in self.messages if is_dialogue_message(msg)]
 
     async def trigger_world_agent_analysis(self):
         """
@@ -643,7 +662,7 @@ class ASR_LLM_Manager:
 
         payload = {
             "model": "deepseek/deepseek-chat-v3-0324",
-            "messages": self.messages,
+            "messages": self.get_filtered_messages_for_llm(),
             "stream": True,
             "provider": {
                 'order': 
