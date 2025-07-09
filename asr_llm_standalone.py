@@ -608,6 +608,44 @@ class ASR_LLM_Manager:
             logger.error(f"Error triggering world agent analysis: {e}")
         finally:
             logger.info("World agent analysis completed")
+
+    def trigger_world_agent_analysis_sync(self):
+        """
+        Synchronous wrapper that runs the async world agent analysis in a new event loop.
+        This method runs in a separate thread to avoid blocking the main event loop.
+        """
+        if not self.image_swap or not self.world_agent:
+            logger.debug("World agent analysis skipped - image_swap disabled or world_agent not available")
+            return
+            
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            logger.info("World agent analysis starting in separate thread...")
+            # Get the last 6 messages for context
+            recent_messages = self.get_recent_messages(6)
+            
+            if recent_messages:
+                logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
+                
+                # Process the conversation update with world agent
+                image_generated = loop.run_until_complete(
+                    self.world_agent.process_conversation_update(recent_messages)
+                )
+                
+                if image_generated:
+                    logger.info("World agent successfully generated and sent an image")
+                else:
+                    logger.debug("World agent decided no image generation was needed")
+            else:
+                logger.warning("No recent messages found for world agent analysis")
+                    
+        except Exception as e:
+            logger.error(f"Error triggering world agent analysis: {e}")
+        finally:
+            logger.info("World agent analysis completed in separate thread")
+            loop.close()
     
     
     def replace_special_quotes_to_straight_quotes(self, input_prompt: str) -> str:
@@ -727,6 +765,11 @@ class ASR_LLM_Manager:
                             )
                             logger.info(f"Current response: {current_response}")
                             print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
+
+                            # Trigger world agent analysis after assistant message is added (non-blocking)
+                            logger.info("Starting world agent analysis in background task")
+                            asyncio.create_task(asyncio.to_thread(self.trigger_world_agent_analysis_sync))
+                            logger.info("World agent analysis task created, continuing with TTS flow")
                             
                             # Save LLM response to database
                             try:
@@ -743,10 +786,6 @@ class ASR_LLM_Manager:
                             # Send DONE marker to frontend immediately via LiveKit
                             await self.publish_frontend_stream_livekit("DONE", "")
                             
-                            # Trigger world agent analysis after assistant message is added (non-blocking)
-                            logger.info("Starting world agent analysis in background task")
-                            asyncio.create_task(self.trigger_world_agent_analysis())
-                            logger.info("World agent analysis task created, continuing with TTS flow")
                                                         
                             break
 
