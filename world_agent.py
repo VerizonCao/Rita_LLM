@@ -462,7 +462,8 @@ Keep your analysis brief and focused."""
                 
                 # Send the generated image file via LiveKit (keeping existing functionality)
                 if self.room:
-                    await self._send_image_to_livekit(image_path)
+                    # we use image_url and let frontend send the swap request
+                    # await self._send_image_to_livekit(image_path)
                     
                     # Send IMAGE_END signal to frontend after successful image generation and sending
                     await self.publish_frontend_stream_livekit("IMAGE_END", "")
