@@ -780,6 +780,7 @@ class ASR_LLM_Manager:
                                     assistant_name=self.assistant_nickname or "Assistant",
                                     model="google/gemini-2.5-flash-preview-05-20"
                                 )
+                                
                             except Exception as e:
                                 logger.error(f"Failed to save LLM response to database: {e}")
                             
@@ -893,3 +894,65 @@ class ASR_LLM_Manager:
             logger.warning(f"Skipping history appending due to user interruption")
         
         return self.current_usage["total_tokens"]  # Return the total tokens for backward compatibility
+
+    def remove_image_message(self, message_id: str, image_url: str) -> bool:
+        """
+        Remove an image message from database.
+        Loads full message data only when needed for removal.
+        Matches by imageUrl since it's a unique identifier.
+        
+        Args:
+            message_id: The ID of the message to remove (from frontend, kept for logging)
+            image_url: The image URL to identify the message to remove
+            
+        Returns:
+            True if message was found and removed, False otherwise
+        """
+        try:
+            logger.info(f"Attempting to remove image message with URL: {image_url}")
+            
+            # Load full messages from database (only when needed)
+            if not self.chat_session_manager or not self.user_id or not self.avatar_id:
+                logger.error("Chat session manager not available for image message removal")
+                return False
+            
+            current_messages = self.chat_session_manager.read_full_history(
+                user_id=self.user_id,
+                avatar_id=self.avatar_id
+            )
+            
+            # Find and remove the message from the database messages
+            # Match by imageUrl since it's a unique identifier
+            db_message_found = False
+            for i, db_message in enumerate(current_messages):
+                if (db_message.imageUrl == image_url and
+                    db_message.role == 'assistant'):
+                    
+                    logger.info(f"Found image message in database to remove at index {i}: {db_message.to_dict()}")
+                    
+                    # Remove the message from the list
+                    current_messages.pop(i)
+                    db_message_found = True
+                    break
+            
+            if not db_message_found:
+                logger.warning(f"Image message not found in database with URL: {image_url}")
+                return False
+            
+            # Update the database session with the modified messages list
+            session_id = self.chat_session_manager.update_session_messages(
+                user_id=self.user_id,
+                avatar_id=self.avatar_id,
+                messages=current_messages
+            )
+            
+            if session_id:
+                logger.info(f"Successfully updated database session {session_id} after removing image message")
+                return True
+            else:
+                logger.error("Failed to update database session after removing image message")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error removing image message: {e}")
+            return False
