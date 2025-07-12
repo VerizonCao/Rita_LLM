@@ -175,4 +175,3 @@ cython_debug/
 .pypirc
 
 file_paths.json
-content_rank/output/
