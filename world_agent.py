@@ -10,6 +10,8 @@ import requests
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
+import boto3
+from botocore.exceptions import ClientError
 
 # MCP Client imports
 from mcp import ClientSession, StdioServerParameters
@@ -91,6 +93,28 @@ class WorldAgent:
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
             "Content-Type": "application/json",
         }
+        
+        # AWS S3 configuration
+        self.aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+        self.aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        self.aws_region = os.getenv('AWS_REGION', 'us-west-2')
+        self.aws_bucket_name = os.getenv('AWS_BUCKET_NAME', 'rita-avatar-image')
+        
+        # Initialize S3 client if credentials are available
+        self.s3_client = None
+        if self.aws_access_key_id and self.aws_secret_access_key:
+            try:
+                self.s3_client = boto3.client(
+                    's3',
+                    region_name=self.aws_region,
+                    aws_access_key_id=self.aws_access_key_id,
+                    aws_secret_access_key=self.aws_secret_access_key
+                )
+                logger.info("S3 client initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize S3 client: {e}")
+        else:
+            logger.warning("AWS credentials not found, S3 upload functionality will be disabled")
         
         # Initialize MCP connection if event loop is available
         if self.loop:
@@ -458,8 +482,9 @@ Keep your analysis brief and focused."""
                 
                 # Send the image URL via frontend_stream data channel AFTER database write is complete
                 await self.publish_image_url_livekit(output_url, f"Generated image: {prompt}")
-                logger.info("Sent image URL to frontend via frontend_stream")
-                
+                logger.info("Sent image URL to frontend via frontend_stream")   
+
+                send_end_success = False
                 # Send the generated image file via LiveKit (keeping existing functionality)
                 if self.room:
                     # we use image_url and let frontend send the swap request
@@ -469,13 +494,42 @@ Keep your analysis brief and focused."""
                     await self.publish_frontend_stream_livekit("IMAGE_END", "")
                     logger.info("Sent IMAGE_END signal to frontend")
                     
-                    return True
+                    send_end_success = True
                 else:
                     logger.warning("No LiveKit room available for sending image file")
                     # Send IMAGE_END signal even if room is not available
                     await self.publish_frontend_stream_livekit("IMAGE_END", "")
                     logger.info("Sent IMAGE_END signal to frontend (no room available)")
-                    return False
+                    send_end_success = False
+
+                # Upload image to S3 in background (non-blocking)
+                # This runs in the same thread but after frontend communication is complete
+                try:
+                    s3_key = self.upload_image_to_s3(output_url, prompt)
+                    if s3_key:
+                        logger.info(f"Successfully uploaded image to S3: {s3_key}")
+                        # Update the database message with S3 key instead of replicate URL
+                        # This ensures the database stores the permanent S3 key
+                        if self.chat_session_manager and self.user_id and self.avatar_id:
+                            try:
+                                # Update the last message to use S3 key instead of replicate URL
+                                self.chat_session_manager.update_last_image_message_url(
+                                    user_id=self.user_id,
+                                    avatar_id=self.avatar_id,
+                                    old_image_url=output_url,
+                                    new_image_url=s3_key
+                                )
+                                logger.info(f"Updated database message to use S3 key: {s3_key}")
+                            except Exception as e:
+                                logger.error(f"Failed to update database message with S3 key: {e}")
+                    else:
+                        logger.warning("S3 upload failed, keeping original replicate URL in database")
+                except Exception as e:
+                    logger.error(f"Error during S3 upload process: {e}")   
+                    
+                return send_end_success
+
+                
             else:
                 logger.error("Image generation failed - no output URL received")
                 # Send IMAGE_END signal even if generation failed
@@ -524,6 +578,73 @@ Keep your analysis brief and focused."""
 
         except Exception as e:
             logger.error(f"Error sending image to LiveKit: {e}")
+
+    def upload_image_to_s3(self, image_url: str, prompt: str) -> Optional[str]:
+        """
+        Download image from replicate URL and upload to S3.
+        
+        Args:
+            image_url: The replicate URL of the generated image
+            prompt: The image generation prompt for logging
+            
+        Returns:
+            S3 object key if successful, None otherwise
+        """
+        if not self.s3_client:
+            logger.warning("S3 client not available, skipping upload")
+            return None
+            
+        try:
+            logger.info(f"Starting S3 upload for image: {prompt[:100]}...")
+            
+            # Download image from replicate URL
+            response = requests.get(image_url, timeout=30)
+            response.raise_for_status()
+            image_content = response.content
+            
+            # Generate S3 object key
+            timestamp = int(time.time())
+            file_extension = '.jpg'  # Default extension
+            if '.' in image_url:
+                file_extension = '.' + image_url.split('.')[-1]
+            elif 'content-type' in response.headers:
+                content_type = response.headers['content-type']
+                if 'png' in content_type:
+                    file_extension = '.png'
+                elif 'gif' in content_type:
+                    file_extension = '.gif'
+                elif 'webp' in content_type:
+                    file_extension = '.webp'
+            
+            # Create S3 object key with user and avatar context
+            # Format: rita-swap-images/{user_id}/a-{avatar_id}/{timestamp}.{extension}
+            s3_key = f"rita-swap-images/{self.user_id}/{self.avatar_id}/{timestamp}{file_extension}"
+            
+            # Upload to S3
+            self.s3_client.put_object(
+                Bucket=self.aws_bucket_name,
+                Key=s3_key,
+                Body=image_content,
+                ContentType=response.headers.get('content-type', 'image/jpeg'),
+                Metadata={
+                    'user_id': self.user_id,
+                    'avatar_id': self.avatar_id,
+                    'generated_at': str(timestamp)
+                }
+            )
+            
+            logger.info(f"Successfully uploaded image to S3: {s3_key}")
+            return s3_key
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download image from {image_url}: {e}")
+            return None
+        except ClientError as e:
+            logger.error(f"Failed to upload image to S3: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error during S3 upload: {e}")
+            return None
 
     async def process_conversation_update(self, recent_messages: List[Dict[str, str]]) -> bool:
         """

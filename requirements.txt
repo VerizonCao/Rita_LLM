@@ -30,4 +30,7 @@ opentelemetry-exporter-otlp
 mcp==1.10.1
 replicate==1.0.7
 
+# AWS dependencies
+boto3>=1.26.0
+
 
