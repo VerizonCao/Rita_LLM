@@ -100,21 +100,39 @@ class WorldAgent:
         self.aws_region = os.getenv('AWS_REGION', 'us-west-2')
         self.aws_bucket_name = os.getenv('AWS_BUCKET_NAME', 'rita-avatar-image')
         
-        # Initialize S3 client if credentials are available
+        # Initialize S3 client - support both explicit credentials and IAM role
         self.s3_client = None
-        if self.aws_access_key_id and self.aws_secret_access_key:
-            try:
+        try:
+            # Check if we're in Lambda environment (has session token)
+            aws_session_token = os.getenv('AWS_SESSION_TOKEN')
+            
+            if aws_session_token:
+                # Lambda environment - use IAM role with session token
+                self.s3_client = boto3.client(
+                    's3',
+                    aws_access_key_id=self.aws_access_key_id,
+                    aws_secret_access_key=self.aws_secret_access_key,
+                    aws_session_token=aws_session_token,
+                    region_name=self.aws_region
+                )
+                logger.info("S3 client initialized with Lambda IAM role")
+            elif self.aws_access_key_id and self.aws_secret_access_key:
+                # Local development - use explicit credentials
                 self.s3_client = boto3.client(
                     's3',
                     region_name=self.aws_region,
                     aws_access_key_id=self.aws_access_key_id,
                     aws_secret_access_key=self.aws_secret_access_key
                 )
-                logger.info("S3 client initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize S3 client: {e}")
-        else:
-            logger.warning("AWS credentials not found, S3 upload functionality will be disabled")
+                logger.info("S3 client initialized with explicit credentials")
+            else:
+                # Try to use default credentials (IAM role without session token)
+                self.s3_client = boto3.client('s3', region_name=self.aws_region)
+                logger.info("S3 client initialized with default credentials")
+                
+        except Exception as e:
+            logger.warning(f"Failed to initialize S3 client: {e}")
+            self.s3_client = None
         
         # Initialize MCP connection if event loop is available
         if self.loop:
