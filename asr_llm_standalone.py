@@ -895,15 +895,42 @@ class ASR_LLM_Manager:
         
         return self.current_usage["total_tokens"]  # Return the total tokens for backward compatibility
 
+    def _extract_s3_key_from_url(self, image_url: str) -> str:
+        """
+        Extract S3 key from a full S3 URL.
+        
+        Args:
+            image_url: Full S3 URL with query parameters
+            
+        Returns:
+            S3 key (e.g., 'rita-swap-images/user_id/avatar_id/filename.jpg')
+        """
+        try:
+            from urllib.parse import urlparse
+            
+            # Parse the URL
+            parsed = urlparse(image_url)
+            
+            # Extract the path and remove leading slash
+            s3_key = parsed.path.lstrip('/')
+            
+            logger.debug(f"Extracted S3 key '{s3_key}' from URL: {image_url}")
+            return s3_key
+            
+        except Exception as e:
+            logger.error(f"Error extracting S3 key from URL {image_url}: {e}")
+            return image_url  # Return original URL if extraction fails
+
     def remove_image_message(self, message_id: str, image_url: str) -> bool:
         """
         Remove an image message from database.
         Loads full message data only when needed for removal.
         Matches by imageUrl since it's a unique identifier.
+        Handles both full S3 URLs and S3 keys.
         
         Args:
             message_id: The ID of the message to remove (from frontend, kept for logging)
-            image_url: The image URL to identify the message to remove
+            image_url: The image URL to identify the message to remove (can be full S3 URL or S3 key)
             
         Returns:
             True if message was found and removed, False otherwise
@@ -921,14 +948,27 @@ class ASR_LLM_Manager:
                 avatar_id=self.avatar_id
             )
             
+            # Extract S3 key if the URL is a full S3 URL
+            search_key = image_url
+            if 'amazonaws.com' in image_url and '?' in image_url:
+                search_key = self._extract_s3_key_from_url(image_url)
+                logger.info(f"Extracted S3 key for search: {search_key}")
+            
             # Find and remove the message from the database messages
-            # Match by imageUrl since it's a unique identifier
+            # Match by imageUrl or origin_image_url since either could be used for removal
             db_message_found = False
             for i, db_message in enumerate(current_messages):
-                if (db_message.imageUrl == image_url and
+                # Check if the message matches by imageUrl or origin_image_url
+                matches_image_url = (hasattr(db_message, 'imageUrl') and 
+                                   db_message.imageUrl == search_key)
+                matches_origin_url = (hasattr(db_message, 'origin_image_url') and 
+                                    db_message.origin_image_url == search_key)
+                
+                if ((matches_image_url or matches_origin_url) and
                     db_message.role == 'assistant'):
                     
                     logger.info(f"Found image message in database to remove at index {i}: {db_message.to_dict()}")
+                    logger.info(f"Matched by imageUrl: {matches_image_url}, origin_image_url: {matches_origin_url}")
                     
                     # Remove the message from the list
                     current_messages.pop(i)
@@ -936,7 +976,7 @@ class ASR_LLM_Manager:
                     break
             
             if not db_message_found:
-                logger.warning(f"Image message not found in database with URL: {image_url}")
+                logger.warning(f"Image message not found in database with URL/key: {search_key}")
                 return False
             
             # Update the database session with the modified messages list

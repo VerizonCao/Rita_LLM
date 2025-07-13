@@ -28,7 +28,8 @@ class ChatMessage(ABC):
         deleted: bool = False,
         filtered: bool = False,
         context: int = -1,
-        imageUrl: Optional[str] = None
+        imageUrl: Optional[str] = None,
+        origin_image_url: Optional[str] = None
     ):
         """
         Initialize chat message.
@@ -44,6 +45,7 @@ class ChatMessage(ABC):
             filtered: Whether message is filtered
             context: Context index for the message
             imageUrl: URL for image messages (optional)
+            origin_image_url: Original image URL before S3 upload (optional)
         """
         self.id = message_id or generate_short_id()
         self.content = content
@@ -55,6 +57,7 @@ class ChatMessage(ABC):
         self.filtered = filtered
         self.context = context
         self.imageUrl = imageUrl
+        self.origin_image_url = origin_image_url
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary for JSON serialization."""
@@ -71,6 +74,8 @@ class ChatMessage(ABC):
         }
         if self.imageUrl:
             result["imageUrl"] = self.imageUrl
+        if self.origin_image_url:
+            result["origin_image_url"] = self.origin_image_url
         return result
     
     def to_json(self) -> str:
@@ -158,7 +163,8 @@ class AssistantMessage(ChatMessage):
         deleted: bool = False,
         filtered: bool = False,
         context: int = -1,
-        imageUrl: Optional[str] = None
+        imageUrl: Optional[str] = None,
+        origin_image_url: Optional[str] = None
     ):
         """
         Initialize assistant message.
@@ -175,6 +181,8 @@ class AssistantMessage(ChatMessage):
             deleted: Whether message is deleted
             filtered: Whether message is filtered
             context: Context index for the message
+            imageUrl: URL for image messages (optional)
+            origin_image_url: Original image URL before S3 upload (optional)
         """
         super().__init__(
             content=content,
@@ -186,7 +194,8 @@ class AssistantMessage(ChatMessage):
             deleted=deleted,
             filtered=filtered,
             context=context,
-            imageUrl=imageUrl
+            imageUrl=imageUrl,
+            origin_image_url=origin_image_url
         )
         self.model = model
         self.prompt_tokens = prompt_tokens
@@ -221,7 +230,8 @@ class AssistantMessage(ChatMessage):
             deleted=data.get('deleted', False),
             filtered=data.get('filtered', False),
             context=data.get('context', -1),
-            imageUrl=data.get('imageUrl')
+            imageUrl=data.get('imageUrl'),
+            origin_image_url=data.get('origin_image_url')
         )
 
 def parse_messages_from_jsonb(jsonb_data: Union[str, list]) -> List[ChatMessage]:

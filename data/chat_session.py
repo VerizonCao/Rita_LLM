@@ -237,7 +237,8 @@ class ChatSessionManager:
         content: str, 
         imageUrl: str,
         assistant_name: str = "Assistant",
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        origin_image_url: Optional[str] = None
     ) -> Optional[str]:
         """
         Convenience method to write an assistant message with an image URL.
@@ -249,6 +250,7 @@ class ChatSessionManager:
             imageUrl: URL of the generated image
             assistant_name: Assistant display name
             model: LLM model used
+            origin_image_url: Original image URL before S3 upload (optional)
             
         Returns:
             Session ID if successful, None otherwise
@@ -258,7 +260,8 @@ class ChatSessionManager:
             sender_id=avatar_id,
             sender_name=assistant_name,
             model=model,
-            imageUrl=imageUrl
+            imageUrl=imageUrl,
+            origin_image_url=origin_image_url
         )
         return self.write_message(user_id, avatar_id, assistant_message)
 
@@ -323,12 +326,13 @@ class ChatSessionManager:
     ) -> Optional[str]:
         """
         Update the image URL of the last assistant message that has an image.
+        Stores the original URL in origin_image_url field for future reference.
         
         Args:
             user_id: User identifier
             avatar_id: Avatar identifier
-            old_image_url: The current image URL to replace
-            new_image_url: The new image URL to set
+            old_image_url: The current image URL to replace (original replicate URL)
+            new_image_url: The new image URL to set (S3 key)
             
         Returns:
             Session ID if successful, None otherwise
@@ -364,9 +368,11 @@ class ChatSessionManager:
                 if (msg.role == 'assistant' and 
                     hasattr(msg, 'imageUrl') and 
                     msg.imageUrl == old_image_url):
+                    # Store the original URL before updating to S3 key
+                    msg.origin_image_url = old_image_url
                     msg.imageUrl = new_image_url
                     updated = True
-                    logger.info(f"Updated image URL from {old_image_url} to {new_image_url}")
+                    logger.info(f"Updated image URL from {old_image_url} to {new_image_url}, stored original URL")
                     break
             
             if not updated:
