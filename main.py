@@ -16,11 +16,9 @@ import aiohttp
 
 # force push
 
-from alive_inference_status import ALRealtimeIOAndStatus
 from alive_inference_config import AliveInferenceConfig
 from local_asrllm_seperated_from_tts_livekit import (
     run_audio2audio_in_thread,
-    SimpleAudioCaptureHandler,
     AudioCaptureWrapper,
 )
 from telemetry import setup_telemetry, shutdown_telemetry
@@ -47,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 # Initialize config and status
 config = AliveInferenceConfig()
-status = ALRealtimeIOAndStatus()
 
 # Initialize metrics
 metrics = setup_telemetry()
@@ -119,7 +116,6 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
     # Initialize audio capture wrapper and start audio thread before room connection
     state.audio_capture_wrapper = AudioCaptureWrapper()
     audio_thread = run_audio2audio_in_thread(
-        status=status,
         config=config,
         audio_play_locally=False,
         audio_capture_wrapper=state.audio_capture_wrapper,

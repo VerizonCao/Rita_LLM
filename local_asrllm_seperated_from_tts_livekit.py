@@ -8,7 +8,6 @@ import tempfile
 from pathlib import Path
 import asyncio
 
-from alive_inference_status import ALRealtimeIOAndStatus
 from audio_capture_livekit import (
     AudioCaptureLiveKit,
     AudioCaptureEventHandler,
@@ -31,7 +30,6 @@ RESOURCES_DIR = SCRIPT_DIR / "pretrained_weights" / "audio_capture"
 class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
     def __init__(
         self,
-        status: ALRealtimeIOAndStatus,
         config: AliveInferenceConfig,
         audio_play_locally=False,
         audio_track=None,
@@ -43,7 +41,6 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.is_speaking = False
         self.current_audio = []
         self.sample_rate = 24000
-        self.status = status
         self.config = config  # Store config reference
         # Initialize ASR_LLM_Manager with image_swap parameter
         # When image_swap is True, it automatically enables world agent
@@ -113,7 +110,6 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
     def on_speech_start(self):
         self.is_speaking = True
         self.current_audio = []
-        self.status.set_user_talking()
         logger.info("Local VAD: User speech started")
         self.interrupt_processing()
 
@@ -235,7 +231,6 @@ class AudioCaptureWrapper:
         self.audio_track = None
 
 def run_audio_capture_test(
-    status: ALRealtimeIOAndStatus,
     config: AliveInferenceConfig,
     use_silero_vad=True,
     audio_play_locally=False,
@@ -249,7 +244,6 @@ def run_audio_capture_test(
 
     try:
         event_handler = SimpleAudioCaptureHandler(
-            status=status, 
             config=config, 
             audio_play_locally=audio_play_locally,
             audio_track=audio_capture_wrapper.audio_track if audio_capture_wrapper else None,
@@ -327,7 +321,6 @@ def run_audio_capture_test(
 
 
 def run_audio2audio_in_thread(
-    status: ALRealtimeIOAndStatus,
     config: AliveInferenceConfig,
     audio_play_locally=False,
     audio_capture_wrapper: AudioCaptureWrapper = None,
@@ -338,7 +331,7 @@ def run_audio2audio_in_thread(
 ):
     thread = threading.Thread(
         target=run_audio_capture_test,
-        args=(status, config, True, audio_play_locally, audio_capture_wrapper, room, loop, image_swap, image_url),
+        args=(config, True, audio_play_locally, audio_capture_wrapper, room, loop, image_swap, image_url),
         daemon=True,
     )
     thread.start()
@@ -346,9 +339,8 @@ def run_audio2audio_in_thread(
 
 
 if __name__ == "__main__":
-    status = ALRealtimeIOAndStatus()
     config = AliveInferenceConfig()
-    audio_thread = run_audio2audio_in_thread(status, config, audio_play_locally=True)
+    audio_thread = run_audio2audio_in_thread(config, audio_play_locally=True)
     try:
         audio_thread.join()
     except KeyboardInterrupt:
