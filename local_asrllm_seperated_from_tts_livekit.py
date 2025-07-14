@@ -67,16 +67,6 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.text_input = None
         self.text_input_voice = []
 
-    def update_llm_manager(self):
-        """Update the ASR_LLM_Manager with new LLM data"""
-        if self.asr_llm_manager:
-            # Create a new ASR_LLM_Manager with updated config
-            self.asr_llm_manager = ASR_LLM_Manager(
-                llm_data=self.config.get_llm_tuple(),
-                room=self.room,
-                loop=self.loop,
-            )
-
     def interrupt_processing(self):
         if self.processing_thread and self.processing_thread.is_alive():
             logger.info("Interrupting previous processing")

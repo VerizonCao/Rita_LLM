@@ -23,7 +23,81 @@ class ChatSessionManager:
     def __init__(self):
         """Initialize with database manager."""
         self.db_manager = DatabaseManager()
-    
+        
+    def load_avatar_metadata(self, avatar_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Load avatar data from the avatars table.
+        
+        Args:
+            avatar_id: Avatar identifier
+            
+        Returns:
+            Dictionary with avatar_name, prompt, and opening_prompt if found, None otherwise
+        """
+        try:
+            if not self.db_manager.ensure_connection():
+                logger.error("Failed to establish database connection for avatar data")
+                return None
+            
+            query = """
+            SELECT avatar_name, prompt, opening_prompt
+            FROM avatars 
+            WHERE avatar_id = %s
+            """
+            
+            result = self.db_manager.execute_query(query, (avatar_id,))
+            
+            if result and len(result) > 0:
+                avatar_data = result[0]
+                logger.info(f"Loaded avatar data for avatar_id: {avatar_id}")
+                return {
+                    'avatar_name': avatar_data.get('avatar_name'),
+                    'prompt': avatar_data.get('prompt'),
+                    'opening_prompt': avatar_data.get('opening_prompt')
+                }
+            else:
+                logger.warning(f"No avatar found with avatar_id: {avatar_id}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error loading avatar data: {e}")
+            return None
+
+    def load_user_preferred_name(self, user_id: str) -> Optional[str]:
+        """
+        Load user preferred name from the users table.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            User preferred name if found, None otherwise
+        """
+        try:
+            if not self.db_manager.ensure_connection():
+                logger.error("Failed to establish database connection for user data")
+                return None
+            
+            query = """
+            SELECT preferred_name
+            FROM users 
+            WHERE user_id = %s
+            """
+            
+            result = self.db_manager.execute_query(query, (user_id,))
+            
+            if result and len(result) > 0:
+                preferred_name = result[0].get('preferred_name')
+                logger.info(f"Loaded preferred_name for user_id: {user_id}")
+                return preferred_name
+            else:
+                logger.warning(f"No user found with user_id: {user_id}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error loading user preferred name: {e}")
+            return None 
+        
     def read_history(self, user_id: str, avatar_id: str, max_messages: int = 50) -> List[Dict[str, str]]:
         """
         Read conversation history formatted for LLM.

@@ -1,4 +1,3 @@
-from _input_utils import TextChunkSpliter
 import logging
 from pathlib import Path
 import sys
@@ -7,7 +6,6 @@ from openai import OpenAI
 import time
 import requests
 import json
-from system_prompt import LLM_System_Prompt
 from livekit import rtc  # Add LiveKit import
 from livekit.rtc import TextStreamWriter  # Add TextStreamWriter import
 import asyncio
@@ -21,8 +19,14 @@ from typing import Dict
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
-# Import chat system
-from data import ChatSessionManager
+# Import config
+
+# Import Chat utils
+from _input_utils import TextChunkSpliter
+from system_prompt import LLM_System_Prompt
+
+# Import chat db system
+from data import ChatSessionManager, DatabaseManager
 
 # Import world agent
 from world_agent import WorldAgent
@@ -40,7 +44,8 @@ logger = logging.getLogger(__name__)
 class ASR_LLM_Manager:
     def __init__(
         self,
-        llm_data: tuple = None,
+        user_id: str = None,
+        avatar_id: str = None,
         room: rtc.Room = None,  # Add type hint for LiveKit room
         loop: asyncio.AbstractEventLoop = None,  # Add event loop parameter
         image_swap: bool = False,  # Enable image swap and world agent
@@ -54,6 +59,8 @@ class ASR_LLM_Manager:
         if not self.openai_client.api_key:
             raise ValueError("DEEPINFRA_API_KEY environment variable is not set")
 
+        self.avatar_id = avatar_id
+        self.user_id = user_id
         # Store room reference and event loop
         self.room = room
         self.loop = loop  # Store the event loop reference
@@ -84,37 +91,16 @@ class ASR_LLM_Manager:
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
             "Content-Type": "application/json",
         }
-        (
-            user_nickname,
-            user_bio,
-            assistant_nickname,
-            assistant_bio,
-            assistant_additional_characteristics,
-            conversation_context,
-            expression_list,
-            user_id,
-            avatar_id,
-        ) = llm_data
-        self.user_nickname = user_nickname
-        self.user_bio = user_bio
-        self.assistant_nickname = assistant_nickname
-        self.assistant_bio = assistant_bio
-        self.assistant_additional_characteristics = assistant_additional_characteristics
-        self.conversation_context = conversation_context
-        self.expression_list = expression_list
-        self.user_id = user_id
-        self.avatar_id = avatar_id
+        # chat metadata and session config
+        self._load_llm_data() # load name, prompt, greeting, user nickname
 
         # Initialize simplified chat session manager
         self.chat_session_manager = ChatSessionManager()
 
-        self.expression_list = expression_list
         system_prompt_obj: LLM_System_Prompt = LLM_System_Prompt(
-            assistant_name=assistant_nickname,
-            assistant_bio=assistant_bio,
-            assistant_additional_characteristics=assistant_additional_characteristics,
-            user_name=user_nickname,
-            conversation_context=conversation_context,
+            character_name=self.character_name,
+            character_prompt=self.character_prompt,
+            user_preferred_name=self.user_preferred_name,
         )
         self.system_prompt = system_prompt_obj.get_system_prompt()
 
@@ -130,7 +116,7 @@ class ASR_LLM_Manager:
                     chat_session_manager=self.chat_session_manager,
                     user_id=self.user_id,
                     avatar_id=self.avatar_id,
-                    assistant_name=self.assistant_nickname or "Assistant"
+                    assistant_name=self.character_name or "Assistant"
                 )
                 logger.info("World agent initialized successfully")
             except Exception as e:
@@ -248,6 +234,39 @@ class ASR_LLM_Manager:
                 continue
         
         logger.info("Text publisher worker thread stopped")
+        
+    def _load_llm_data(self):
+        "Load character name, prompt, opening prompt(greeting), user nickname "
+        try:
+            # Load avatar data from avatars table
+            avatar_data = self.chat_session_manager.load_avatar_metadata(self.avatar_id)
+            if avatar_data:
+                self.character_name = avatar_data.get('avatar_name', '')
+                self.character_prompt = avatar_data.get('prompt', '')
+                self.avatar_opening_prompt = avatar_data.get('opening_prompt', '')
+                logger.info(f"Loaded avatar data: name={self.character_name}, prompt_length={len(self.character_prompt) if self.character_prompt else 0}, opening_prompt_length={len(self.avatar_opening_prompt) if self.avatar_opening_prompt else 0}")
+            else:
+                logger.warning(f"Failed to load avatar data for avatar_id: {self.avatar_id}")
+                self.character_name = ''
+                self.character_prompt = ''
+                self.avatar_opening_prompt = ''
+            
+            # Load user preferred name from users table
+            preferred_name = self.chat_session_manager.load_user_preferred_name(self.user_id)
+            if preferred_name:
+                self.user_preferred_name = preferred_name
+                logger.info(f"Loaded user preferred name: {self.user_preferred_name}")
+            else:
+                logger.warning(f"Failed to load preferred name for user_id: {self.user_id}")
+                self.user_preferred_name = ''
+                
+        except Exception as e:
+            logger.error(f"Error in _load_llm_data: {e}")
+            # Set default values on error
+            self.character_name = ''
+            self.character_prompt = ''
+            self.avatar_opening_prompt = ''
+            self.user_preferred_name = ''
 
     def _load_test_images(self) -> list:
         """Load all test images from the test folder"""
@@ -292,7 +311,7 @@ class ASR_LLM_Manager:
                 logger.info(f"Loaded {len(history)} messages from conversation history")
             else:
                 # No history exists, try to load opening_prompt from avatars table
-                opening_prompt = self._get_opening_prompt()
+                opening_prompt = self.avatar_opening_prompt
                 if opening_prompt:
                     # Add opening prompt as first assistant message
                     opening_message = {"role": "assistant", "content": opening_prompt}
@@ -304,7 +323,7 @@ class ASR_LLM_Manager:
                             user_id=self.user_id,
                             avatar_id=self.avatar_id,
                             content=opening_prompt,
-                            assistant_name=self.assistant_nickname or "Assistant",
+                            assistant_name=self.character_name or "Assistant",
                             model="opening_prompt"  # Special model name to indicate this is an opening
                         )
                         logger.info(f"Added opening prompt as first assistant message")
@@ -313,30 +332,6 @@ class ASR_LLM_Manager:
             
         except Exception as e:
             logger.error(f"Failed to load conversation history: {e}")
-
-    def _get_opening_prompt(self) -> Optional[str]:
-        """Get opening_prompt from avatars table for this avatar"""
-        try:
-            # Use the database manager from chat session manager
-            if not self.chat_session_manager.db_manager.ensure_connection():
-                logger.error("Failed to establish database connection for opening prompt")
-                return None
-            
-            query = "SELECT opening_prompt FROM avatars WHERE avatar_id = %s"
-            result = self.chat_session_manager.db_manager.execute_query(query, (self.avatar_id,))
-            
-            if result and len(result) > 0:
-                opening_prompt = result[0].get('opening_prompt')
-                if opening_prompt and opening_prompt.strip():
-                    logger.info(f"Retrieved opening prompt for avatar {self.avatar_id}")
-                    return opening_prompt.strip()
-            
-            logger.info(f"No opening prompt found for avatar {self.avatar_id}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Failed to get opening prompt: {e}")
-            return None
 
     def speech_to_text(self, audio_file_path, speech_end_time):
         """Convert speech to text using Whisper API"""
@@ -693,7 +688,7 @@ class ASR_LLM_Manager:
                 user_id=self.user_id,
                 avatar_id=self.avatar_id,
                 content=text,
-                user_name=self.user_nickname or "User"
+                user_name=self.user_preferred_name or "User"
             )
         except Exception as e:
             logger.error(f"Failed to save user message to database: {e}")
@@ -777,7 +772,7 @@ class ASR_LLM_Manager:
                                     user_id=self.user_id,
                                     avatar_id=self.avatar_id,
                                     content=current_response,
-                                    assistant_name=self.assistant_nickname or "Assistant",
+                                    assistant_name=self.character_name or "Assistant",
                                     model="google/gemini-2.5-flash-preview-05-20"
                                 )
                                 

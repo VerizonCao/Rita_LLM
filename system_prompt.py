@@ -1,25 +1,19 @@
 class LLM_System_Prompt:
     def __init__(
         self,
-        assistant_name: str,
-        assistant_bio: str,
-        assistant_additional_characteristics: str,
-        user_name: str,
-        user_bio: str = None,
-        conversation_context: str = None,
+        character_name: str,
+        character_prompt: str,
+        user_preferred_name: str,
     ):
-        self.assistant_name = assistant_name
-        self.assistant_bio = assistant_bio
-        self.user_name = user_name
-        self.user_bio = user_bio
-        self.conversation_context = conversation_context
+        self.character_name = character_name
+        self.user_preferred_name = user_preferred_name
         self.system_prompt = ""
         
-        # Handle placeholders in assistant_additional_characteristics
-        self.assistant_additional_characteristics = assistant_additional_characteristics
-        if self.assistant_additional_characteristics:
-            self.assistant_additional_characteristics = self.assistant_additional_characteristics.replace("{{user}}", self.user_name)
-            self.assistant_additional_characteristics = self.assistant_additional_characteristics.replace("{{char}}", self.assistant_name)
+        # Handle placeholders in character_prompt
+        self.character_prompt = character_prompt
+        if self.character_prompt:
+            self.character_prompt = self.character_prompt.replace("{{user}}", self.user_preferred_name)
+            self.character_prompt = self.character_prompt.replace("{{char}}", self.character_name)
         
 
         # === Character Identity & Immersion ===
@@ -31,17 +25,10 @@ class LLM_System_Prompt:
             "Greet the user with your default greeting message once the chat begins. Do not wait for the user's input to speak first.\n"
         )
         self.system_prompt += (
-            f"Your character name is: {self.assistant_name}. \n"
-            f"Your character bio: {self.assistant_bio}. \n"
-            f"Your character specific instruction: {self.assistant_additional_characteristics}. \n"
-            f"User's nickname is: {self.user_name}. \n"
+            f"Your character name is: {self.character_name}. \n"
+            f"Your character specific instruction: {self.character_prompt}. \n"
+            f"User's preferred name is: {self.user_preferred_name}. \n"
         )
-        if self.conversation_context:
-            self.system_prompt += (
-                f"This conversation's context: {self.conversation_context}. \n"
-            )
-        if self.user_bio:
-            self.system_prompt += f"User's bio: {self.user_bio}. \n"
         # ================================
         # Build system prompt with sections
         # ================================
