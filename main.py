@@ -18,9 +18,10 @@ import aiohttp
 
 from alive_inference_config import AliveInferenceConfig
 from local_asrllm_seperated_from_tts_livekit import (
-    run_audio2audio_in_thread,
+    run_audio_capture_in_thread,
     AudioCaptureWrapper,
 )
+from asr_llm_standalone import ASR_LLM_Manager
 from telemetry import setup_telemetry, shutdown_telemetry
 
 # Load environment variables
@@ -85,7 +86,7 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
     class RoomState:
         def __init__(self):
             self.user_left = False
-            self.audio_capture_wrapper = None
+            self.audio_capture_wrapper : AudioCaptureWrapper = None
             self.last_sent_voice_transcription = None  # Track last sent voice transcription
             self.agent_message_count = 0  # Track number of agent messages processed
             self.text_stream_writer = None  # Store the text stream writer
@@ -94,6 +95,8 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
             self.old_io_source_portrait_folder = None  # Store old portrait folder for cleanup
             self.temp_file_path = None  # Store temporary file path for cleanup
             self.serve_start_time = None  # Track when we start serving
+            
+            self.asr_llm_manager : ASR_LLM_Manager = None
             self.current_user_id = None  # Track current user ID
             self.current_avatar_id = None  # Track current avatar ID
             self.image_swap = False  # Track image swap setting
@@ -113,16 +116,20 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
         state.current_user_id = llm_overrides.get("user_id", "unknown")
         state.current_avatar_id = llm_overrides.get("avatar_id", "unknown")
 
-    # Initialize audio capture wrapper and start audio thread before room connection
-    state.audio_capture_wrapper = AudioCaptureWrapper()
-    audio_thread = run_audio2audio_in_thread(
-        config=config,
-        audio_play_locally=False,
-        audio_capture_wrapper=state.audio_capture_wrapper,
-        room=room,  # Pass the room to the wrapper
-        loop=loop,  # Pass the event loop to the wrapper
+    state.asr_llm_manager = ASR_LLM_Manager(
+        user_id=state.current_user_id,
+        avatar_id=state.current_avatar_id,
+        room=room,
+        loop=loop,
         image_swap=state.image_swap,
         image_url=state.image_url,
+    )
+    # Initialize audio capture wrapper and start audio thread before room connection
+    state.audio_capture_wrapper = AudioCaptureWrapper()
+    audio_thread = run_audio_capture_in_thread(
+        audio_capture_wrapper=state.audio_capture_wrapper,
+        asr_llm_manager=state.asr_llm_manager,
+        loop=loop,
     )
 
     @room.on("participant_connected")
@@ -149,14 +156,11 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
                     if message_id and image_url:
                         logger.info(f"Received IMAGE_MSG_REMOVE request for messageId: {message_id}, imageUrl: {image_url}")
                         
-                        # Access the ASR_LLM_Manager through the audio capture wrapper
-                        if (state.audio_capture_wrapper and 
-                            state.audio_capture_wrapper.audio_capture and 
-                            state.audio_capture_wrapper.audio_capture.event_handler and
-                            state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager):
+                        # Access the ASR_LLM_Manager
+                        if  state.asr_llm_manager :
                             
                             # Call the remove_image_message method
-                            success = state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.remove_image_message(
+                            success = state.asr_llm_manager.remove_image_message(
                                 message_id=message_id,
                                 image_url=image_url
                             )
@@ -339,13 +343,11 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
                         session_manager = PlaySessionManager()
                         
                         # Get usage information from LLM manager
-                        has_audio_capture = state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture
-                        has_event_handler = has_audio_capture and state.audio_capture_wrapper.audio_capture.event_handler
-                        has_llm_manager = has_event_handler and state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager
+                        has_llm_manager = state.asr_llm_manager
                         
                         usage = None
                         if has_llm_manager:
-                            usage = state.audio_capture_wrapper.audio_capture.event_handler.asr_llm_manager.current_usage
+                            usage = state.asr_llm_manager.current_usage
                             # Add serve_time to usage information
                             usage["session_time"] = serve_time
                             

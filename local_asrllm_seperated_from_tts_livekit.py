@@ -13,7 +13,6 @@ from audio_capture_livekit import (
     AudioCaptureEventHandler,
 )
 from asr_llm_standalone import ASR_LLM_Manager
-from alive_inference_config import AliveInferenceConfig
 
 # Configure logging
 logging.basicConfig(
@@ -30,36 +29,21 @@ RESOURCES_DIR = SCRIPT_DIR / "pretrained_weights" / "audio_capture"
 class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
     def __init__(
         self,
-        config: AliveInferenceConfig,
-        audio_play_locally=False,
         audio_track=None,
-        room=None,
-        loop=None,
-        image_swap=False,
-        image_url=None,
+        asr_llm_manager : ASR_LLM_Manager = None,
+        loop : asyncio.AbstractEventLoop = None,
     ):
         self.is_speaking = False
         self.current_audio = []
         self.sample_rate = 24000
-        self.config = config  # Store config reference
-        # Initialize ASR_LLM_Manager with image_swap parameter
-        # When image_swap is True, it automatically enables world agent
-        self.asr_llm_manager = ASR_LLM_Manager(
-            llm_data=config.get_llm_tuple(),
-            room=room,
-            loop=loop,
-            image_swap=image_swap,
-            image_url=image_url,
-        )
+        self.asr_llm_manager = asr_llm_manager
+        self.loop = loop
         self.processing_thread = None
         self.stop_processing = threading.Event()
         self.speech_end_time = 0
         self.last_speech_detected_time = 0
         self.audio_track = audio_track
-        self.room = room
-        self.loop = loop
         self.current_temp_file = None  # Track the current temporary file
-        self.image_url = image_url
 
         self.text_input = None
         self.text_input_voice = []
@@ -220,8 +204,6 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                 logger.info(f"Cleaned up temp file in destructor: {self.current_temp_file}")
             except Exception as e:
                 logger.error(f"Error cleaning up temp file in destructor: {e}")
-        if hasattr(self, "asr_llm_manager"):
-            del self.asr_llm_manager
 
 class AudioCaptureWrapper:
     def __init__(self):
@@ -230,31 +212,20 @@ class AudioCaptureWrapper:
         self.text_input_voice = []  # Array to store voice transcriptions
         self.audio_track = None
 
-def run_audio_capture_test(
-    config: AliveInferenceConfig,
+def launch_audio_capture(
     use_silero_vad=True,
-    audio_play_locally=False,
     audio_capture_wrapper: AudioCaptureWrapper = None,
-    room = None,
-    loop = None,
-    image_swap=False,
-    image_url=None,
+    asr_llm_manager : ASR_LLM_Manager = None,
+    loop : asyncio.AbstractEventLoop = None,
 ):
     audio_capture = None
 
     try:
         event_handler = SimpleAudioCaptureHandler(
-            config=config, 
-            audio_play_locally=audio_play_locally,
             audio_track=audio_capture_wrapper.audio_track if audio_capture_wrapper else None,
-            room=room,
+            asr_llm_manager=asr_llm_manager,
             loop=loop,
-            image_swap=image_swap,
-            image_url=image_url,
         )
-
-        event_handler.asr_llm_manager.image_swap = image_swap
-        event_handler.asr_llm_manager.image_url = image_url
 
         if use_silero_vad:
             logger.info("Using Silero VAD...")
@@ -320,28 +291,16 @@ def run_audio_capture_test(
                 logger.error(f"Error during cleanup: {e}")
 
 
-def run_audio2audio_in_thread(
-    config: AliveInferenceConfig,
-    audio_play_locally=False,
+def run_audio_capture_in_thread(
     audio_capture_wrapper: AudioCaptureWrapper = None,
-    room = None,
-    loop = None,
-    image_swap=False,
-    image_url=None,
+    asr_llm_manager : ASR_LLM_Manager = None,
+    loop : asyncio.AbstractEventLoop = None,
 ):
+    assert asr_llm_manager is not None
     thread = threading.Thread(
-        target=run_audio_capture_test,
-        args=(config, True, audio_play_locally, audio_capture_wrapper, room, loop, image_swap, image_url),
+        target=launch_audio_capture,
+        args=(True, audio_capture_wrapper, asr_llm_manager, loop),
         daemon=True,
     )
     thread.start()
     return thread
-
-
-if __name__ == "__main__":
-    config = AliveInferenceConfig()
-    audio_thread = run_audio2audio_in_thread(config, audio_play_locally=True)
-    try:
-        audio_thread.join()
-    except KeyboardInterrupt:
-        logger.info("Main thread received interrupt signal")
