@@ -91,11 +91,10 @@ class ASR_LLM_Manager:
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
             "Content-Type": "application/json",
         }
-        # chat metadata and session config
-        self._load_llm_data() # load name, prompt, greeting, user nickname
-
         # Initialize simplified chat session manager
         self.chat_session_manager = ChatSessionManager()
+        # chat metadata and session config
+        self._load_llm_data() # load name, prompt, greeting, user nickname
 
         system_prompt_obj: LLM_System_Prompt = LLM_System_Prompt(
             character_name=self.character_name,

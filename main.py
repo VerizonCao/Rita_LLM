@@ -16,7 +16,6 @@ import aiohttp
 
 # force push
 
-from alive_inference_config import AliveInferenceConfig
 from local_asrllm_seperated_from_tts_livekit import (
     run_audio_capture_in_thread,
     AudioCaptureWrapper,
@@ -44,44 +43,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Initialize config and status
-config = AliveInferenceConfig()
-
 # Initialize metrics
 metrics = setup_telemetry()
 
-def override_llm_properties(config: AliveInferenceConfig, override_config: dict):
-    """
-    Override LLM properties in the configuration
-    
-    Args:
-        config: AliveInferenceConfig instance
-        override_config: Dictionary containing LLM properties to override
-    """
-    # Create a temporary copy of file_paths.json in /tmp
-    import shutil
-    import os
-    
-    # Get the original file path
-    current_dir = os.path.dirname(__file__)
-    original_file_path = os.path.join(current_dir, "file_paths.json")
-    temp_file_path = "/tmp/file_paths.json"
-    
-    # Copy the file to /tmp
-    shutil.copy2(original_file_path, temp_file_path)
-    
-    # Update the config to use the temporary file
-    config.file_path = temp_file_path
-    
-    # Now perform the override
-    old_llm_config, old_io_source_portrait_folder = config.replace_all_llm(override_config)
-    
-    # We don't try to copy back to the original location since it's read-only
-    # Instead, we'll just use the temporary file for the rest of the session
-    
-    return old_llm_config, old_io_source_portrait_folder
-
-async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, image_swap: bool = False, image_url: str = None):
+async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_id: str = None, image_swap: bool = False, image_url: str = None):
     # Create a class to hold our state
     class RoomState:
         def __init__(self):
@@ -91,9 +56,6 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
             self.agent_message_count = 0  # Track number of agent messages processed
             self.text_stream_writer = None  # Store the text stream writer
             self.voice_transcription_count = 0  # Track number of voice transcriptions processed
-            self.old_llm_config = None  # Store old LLM config for cleanup
-            self.old_io_source_portrait_folder = None  # Store old portrait folder for cleanup
-            self.temp_file_path = None  # Store temporary file path for cleanup
             self.serve_start_time = None  # Track when we start serving
             
             self.asr_llm_manager : ASR_LLM_Manager = None
@@ -103,19 +65,12 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
             self.image_url = None  # Track image URL
 
     state = RoomState()
+    state.current_user_id = user_id
+    state.current_avatar_id = avatar_id
     state.image_swap = image_swap
     state.image_url = image_url
     loop = asyncio.get_event_loop()  # Get the current event loop
-
-    # Override LLM properties if provided
-    if llm_overrides:
-        state.old_llm_config, state.old_io_source_portrait_folder = override_llm_properties(config, llm_overrides)
-        # Re-initialize the config to load the new values
-        config.io_init(config.file_path)
-        # Store user and avatar IDs if provided
-        state.current_user_id = llm_overrides.get("user_id", "unknown")
-        state.current_avatar_id = llm_overrides.get("avatar_id", "unknown")
-
+    
     state.asr_llm_manager = ASR_LLM_Manager(
         user_id=state.current_user_id,
         avatar_id=state.current_avatar_id,
@@ -493,26 +448,9 @@ async def main_room(room: rtc.Room, room_name: str, llm_overrides: dict = None, 
             print(f"Error in main loop: {e}")
             break
 
-    # Restore original LLM configuration if it was overridden
-    if state.old_llm_config:
-        config.replace_all_llm(state.old_llm_config, io_source_portrait_folder_reset=state.old_io_source_portrait_folder)
-        # Clean up temporary portrait folder if it exists
-        if state.old_io_source_portrait_folder and os.path.exists(state.old_io_source_portrait_folder):
-            try:
-                shutil.rmtree(state.old_io_source_portrait_folder)
-            except Exception as e:
-                print(f"Error cleaning up portrait folder: {e}")
-        
-        # Clean up temporary file if it exists
-        if os.path.exists("/tmp/file_paths.json"):
-            try:
-                os.remove("/tmp/file_paths.json")
-            except Exception as e:
-                print(f"Error cleaning up temporary file: {e}")
-
     return state  # Return the state object
 
-def run_async_room_connection(room_name: str, llm_overrides: dict = None, image_swap: bool = False, image_url: str = None):
+def run_async_room_connection(room_name: str, avatar_id: str = None, user_id: str = None, image_swap: bool = False, image_url: str = None):
     """Wrapper function to run async function in a thread"""
     print("start running the room connection!")
 
@@ -545,7 +483,7 @@ def run_async_room_connection(room_name: str, llm_overrides: dict = None, image_
     async def run_with_cleanup():
         nonlocal state
         try:
-            state = await main_room(room, room_name, llm_overrides, image_swap, image_url)
+            state = await main_room(room, room_name, avatar_id, user_id, image_swap, image_url)
         finally:
             await cleanup()
             # Stop the event loop when we're done
@@ -584,15 +522,8 @@ def handler(event, context):
         # Handle direct invocation (not through SQS)
         if "Records" not in event:
             room_name = event.get("room_name", "test-room")
-            # Get LLM properties and additional fields, filter out empty values
-            llm_properties = {k: v for k, v in event.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia" or k == "user_id" or k == "avatar_id"}
-            if llm_properties:
-                llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
-                if not llm_properties:  # If all values were empty, set to None
-                    llm_properties = None
-                else:
-                    print(f"Applying LLM properties: {llm_properties}")
-                    print(f"user_id: {llm_properties['user_id']}, avatar_id: {llm_properties['avatar_id']}")
+            avatar_id = event.get("avatar_id", None)
+            user_id = event.get("user_id", None)
             
             # Get image_swap parameter
             image_swap = event.get("image_swap", False)
@@ -603,16 +534,19 @@ def handler(event, context):
             image_url = event.get("image_url", None)
             
             print(f"Starting room connection for room: {room_name}")
+            print(f"Avatar ID: {avatar_id}")
+            print(f"User ID: {user_id}")
             print(f"Image swap setting: {image_swap}")
             print(f"Image URL: {image_url}")
             # Direct call since run_async_room_connection manages its own event loop
-            run_async_room_connection(room_name, llm_properties, image_swap, image_url)
+            run_async_room_connection(room_name, avatar_id, user_id, image_swap, image_url)
             return {
                 "statusCode": 200,
                 "body": json.dumps({
                     "message": "Room connection started successfully",
                     "room_name": room_name,
-                    "applied_properties": llm_properties if llm_properties else None,
+                    "avatar_id": avatar_id,
+                    "user_id": user_id,
                     "image_swap": image_swap,
                     "image_url": image_url
                 })
@@ -623,15 +557,8 @@ def handler(event, context):
             try:
                 body = json.loads(record["body"])
                 room_name = body.get("room_name", "test-room")
-                # Get LLM properties and additional fields, filter out empty values
-                llm_properties = {k: v for k, v in body.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia" or k == "user_id" or k == "avatar_id"}
-                if llm_properties:
-                    llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
-                    if not llm_properties:  # If all values were empty, set to None
-                        llm_properties = None
-                    else:
-                        print(f"Applying LLM properties: {llm_properties}")
-                        print(f"user_id: {llm_properties['user_id']}, avatar_id: {llm_properties['avatar_id']}")
+                avatar_id = body.get("avatar_id", None)
+                user_id = body.get("user_id", None)
                 
                 # Get image_swap parameter
                 image_swap = body.get("image_swap", False)
@@ -642,10 +569,12 @@ def handler(event, context):
                 image_url = body.get("image_url", None)
                 
                 print(f"Starting room connection for room: {room_name}")
+                print(f"Avatar ID: {avatar_id}")
+                print(f"User ID: {user_id}")
                 print(f"Image swap setting: {image_swap}")
                 print(f"Image URL: {image_url}")
                 # Direct call since run_async_room_connection manages its own event loop
-                run_async_room_connection(room_name, llm_properties, image_swap, image_url)
+                run_async_room_connection(room_name, avatar_id, user_id, image_swap, image_url)
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON from record: {str(e)}")
                 continue
@@ -765,30 +694,14 @@ async def send_user_not_entered_webhook(room_name: str, user_id: str = None, ava
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Start the room connection with a specified room name')
     parser.add_argument('--room', type=str, default='test-room', help='Name of the room to connect to')
-    parser.add_argument('--properties', type=str, help='JSON string containing LLM properties')
+    parser.add_argument('--avatar-id', type=str, help='Avatar ID')
+    parser.add_argument('--user-id', type=str, help='User ID')
     parser.add_argument('--image-swap', action='store_true', help='Enable image swap functionality')
     parser.add_argument('--image-url', type=str, help='URL of the image to use')
     args = parser.parse_args()
     
-    llm_properties = None
-    if args.properties:
-        try:
-            # Parse the properties directly
-            properties = json.loads(args.properties)
-            # Filter for LLM properties and additional fields
-            llm_properties = {k: v for k, v in properties.items() if k.startswith("llm_") or k == "tts_voice_id_cartesia" or k == "user_id" or k == "avatar_id"}
-            # Filter out empty values
-            if llm_properties:
-                llm_properties = {k: v for k, v in llm_properties.items() if v and str(v).strip()}
-                if not llm_properties:  # If all values were empty, set to None
-                    llm_properties = None
-                else:
-                    print(f"Applying LLM properties: {llm_properties}")
-                    print(f"user_id: {llm_properties['user_id']}, avatar_id: {llm_properties['avatar_id']}")
-        except json.JSONDecodeError as e:
-            print(f"Error parsing properties JSON: {e}")
-            exit(1)
-    
+    print(f"Avatar ID: {args.avatar_id}")
+    print(f"User ID: {args.user_id}")
     print(f"Image swap setting: {args.image_swap}")
     print(f"Image URL: {args.image_url}")
-    run_async_room_connection(args.room, llm_properties, args.image_swap, args.image_url)
+    run_async_room_connection(args.room, args.avatar_id, args.user_id, args.image_swap, args.image_url)
