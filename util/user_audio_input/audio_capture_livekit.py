@@ -10,7 +10,7 @@ import threading
 import time
 import os
 
-from vad import VoiceActivityDetector, SileroVoiceActivityDetector
+from util.user_audio_input.vad import VoiceActivityDetector, SileroVoiceActivityDetector
 from livekit import rtc
 from livekit.agents import utils
 

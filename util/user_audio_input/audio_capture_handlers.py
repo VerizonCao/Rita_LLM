@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 import asyncio
 
-from audio_capture_livekit import (
+from util.user_audio_input.audio_capture_livekit import (
     AudioCaptureLiveKit,
     AudioCaptureEventHandler,
 )

@@ -19,7 +19,7 @@ from mcp.client.stdio import stdio_client
 from contextlib import AsyncExitStack
 
 # Image generation imports
-from image_gen import ImageGenerator, run_flux_model
+from generation.image_gen import ImageGenerator, run_flux_model
 
 # Load environment variables
 load_dotenv()
@@ -44,7 +44,7 @@ class WorldAgent:
     def __init__(
         self,
         character_system_prompt: str,
-        mcp_server_path: str = "chat_server.py",
+        mcp_server_path: str = "generation/chat_server.py",
         image_url: str = None,
         room=None,  # LiveKit room for sending images
         loop: asyncio.AbstractEventLoop = None,

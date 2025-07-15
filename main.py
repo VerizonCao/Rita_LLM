@@ -16,12 +16,12 @@ import aiohttp
 
 # force push
 
-from local_asrllm_seperated_from_tts_livekit import (
+from util.user_audio_input.audio_capture_handlers import (
     run_audio_capture_in_thread,
     AudioCaptureWrapper,
 )
 from asr_llm_standalone import ASR_LLM_Manager
-from telemetry import setup_telemetry, shutdown_telemetry
+from util.metric_logging.telemetry import setup_telemetry, shutdown_telemetry
 
 # Load environment variables
 if os.path.exists(".env"):

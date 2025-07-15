@@ -22,14 +22,14 @@ sys.path.append(str(project_root))
 # Import config
 
 # Import Chat utils
-from _input_utils import TextChunkSpliter
-from system_prompt import LLM_System_Prompt
+from generation.generation_util.text_chunk_spliter import TextChunkSpliter
+from generation.generation_util.system_prompt import LLM_System_Prompt
 
 # Import chat db system
 from data import ChatSessionManager, DatabaseManager
 
 # Import world agent
-from world_agent import WorldAgent
+from generation.world_agent import WorldAgent
 
 # Configure logging
 logging.basicConfig(
@@ -108,7 +108,7 @@ class ASR_LLM_Manager:
             try:
                 self.world_agent = WorldAgent(
                     character_system_prompt=self.system_prompt,
-                    mcp_server_path="chat_server.py",  # Fixed MCP server path
+                    mcp_server_path="generation/chat_server.py",  # Fixed MCP server path
                     image_url=image_url,
                     room=room,
                     loop=loop,
@@ -270,7 +270,7 @@ class ASR_LLM_Manager:
     def _load_test_images(self) -> list:
         """Load all test images from the test folder"""
         try:
-            test_folder = Path(__file__).parent / "test"
+            test_folder = Path(__file__).parent / "util" / "test_images"
             if not test_folder.exists():
                 logger.warning(f"Test folder not found: {test_folder}")
                 return []
@@ -640,7 +640,6 @@ class ASR_LLM_Manager:
         finally:
             logger.info("World agent analysis completed in separate thread")
             loop.close()
-    
     
     def replace_special_quotes_to_straight_quotes(self, input_prompt: str) -> str:
         """Replace special quotes to straight quotes"""
