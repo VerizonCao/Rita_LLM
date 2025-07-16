@@ -292,7 +292,7 @@ Keep your analysis brief and focused."""
             openai_tools = self._convert_mcp_tools_to_openai_format()
 
             payload = {
-                "model": "google/gemini-2.5-flash-preview-05-20",
+                "model": "google/gemini-2.5-flash",
                 "messages": messages,
                 "stream": False,
                 "max_tokens": 500,
