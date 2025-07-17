@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Initialize metrics
 metrics = setup_telemetry()
 
-async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_id: str = None, image_swap: bool = False, image_url: str = None):
+async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_id: str = None, image_swap: bool = False):
     # Create a class to hold our state
     class RoomState:
         def __init__(self):
@@ -62,13 +62,11 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
             self.current_user_id = None  # Track current user ID
             self.current_avatar_id = None  # Track current avatar ID
             self.image_swap = False  # Track image swap setting
-            self.image_url = None  # Track image URL
 
     state = RoomState()
     state.current_user_id = user_id
     state.current_avatar_id = avatar_id
     state.image_swap = image_swap
-    state.image_url = image_url
     loop = asyncio.get_event_loop()  # Get the current event loop
     
     state.asr_llm_manager = ASR_LLM_Manager(
@@ -77,7 +75,6 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
         room=room,
         loop=loop,
         image_swap=state.image_swap,
-        image_url=state.image_url,
     )
     # Initialize audio capture wrapper and start audio thread before room connection
     state.audio_capture_wrapper = AudioCaptureWrapper()
@@ -450,7 +447,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
 
     return state  # Return the state object
 
-def run_async_room_connection(room_name: str, avatar_id: str = None, user_id: str = None, image_swap: bool = False, image_url: str = None):
+def run_async_room_connection(room_name: str, avatar_id: str = None, user_id: str = None, image_swap: bool = False,):
     """Wrapper function to run async function in a thread"""
     print("start running the room connection!")
 
@@ -483,7 +480,7 @@ def run_async_room_connection(room_name: str, avatar_id: str = None, user_id: st
     async def run_with_cleanup():
         nonlocal state
         try:
-            state = await main_room(room, room_name, avatar_id, user_id, image_swap, image_url)
+            state = await main_room(room, room_name, avatar_id, user_id, image_swap,)
         finally:
             await cleanup()
             # Stop the event loop when we're done
@@ -530,16 +527,13 @@ def handler(event, context):
             if isinstance(image_swap, str):
                 image_swap = image_swap.lower() == "true"
             
-            # Get image_url parameter
-            image_url = event.get("image_url", None)
             
             print(f"Starting room connection for room: {room_name}")
             print(f"Avatar ID: {avatar_id}")
             print(f"User ID: {user_id}")
             print(f"Image swap setting: {image_swap}")
-            print(f"Image URL: {image_url}")
             # Direct call since run_async_room_connection manages its own event loop
-            run_async_room_connection(room_name, avatar_id, user_id, image_swap, image_url)
+            run_async_room_connection(room_name, avatar_id, user_id, image_swap,)
             return {
                 "statusCode": 200,
                 "body": json.dumps({
@@ -548,7 +542,6 @@ def handler(event, context):
                     "avatar_id": avatar_id,
                     "user_id": user_id,
                     "image_swap": image_swap,
-                    "image_url": image_url
                 })
             }
 
@@ -565,16 +558,12 @@ def handler(event, context):
                 if isinstance(image_swap, str):
                     image_swap = image_swap.lower() == "true"
                 
-                # Get image_url parameter
-                image_url = body.get("image_url", None)
-                
                 print(f"Starting room connection for room: {room_name}")
                 print(f"Avatar ID: {avatar_id}")
                 print(f"User ID: {user_id}")
                 print(f"Image swap setting: {image_swap}")
-                print(f"Image URL: {image_url}")
                 # Direct call since run_async_room_connection manages its own event loop
-                run_async_room_connection(room_name, avatar_id, user_id, image_swap, image_url)
+                run_async_room_connection(room_name, avatar_id, user_id, image_swap)
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON from record: {str(e)}")
                 continue
@@ -703,5 +692,4 @@ if __name__ == "__main__":
     print(f"Avatar ID: {args.avatar_id}")
     print(f"User ID: {args.user_id}")
     print(f"Image swap setting: {args.image_swap}")
-    print(f"Image URL: {args.image_url}")
-    run_async_room_connection(args.room, args.avatar_id, args.user_id, args.image_swap, args.image_url)
+    run_async_room_connection(args.room, args.avatar_id, args.user_id, args.image_swap)

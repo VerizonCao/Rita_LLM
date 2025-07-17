@@ -49,7 +49,6 @@ class ASR_LLM_Manager:
         room: rtc.Room = None,  # Add type hint for LiveKit room
         loop: asyncio.AbstractEventLoop = None,  # Add event loop parameter
         image_swap: bool = False,  # Enable image swap and world agent
-        image_url: str = None,  # Base image URL for world agent
     ):
         # Initialize Deepinfra client for Whisper ASR
         self.openai_client = OpenAI(
@@ -109,7 +108,6 @@ class ASR_LLM_Manager:
                 self.world_agent = WorldAgent(
                     character_system_prompt=self.system_prompt,
                     mcp_server_path="generation/chat_server.py",  # Fixed MCP server path
-                    image_url=image_url,
                     room=room,
                     loop=loop,
                     chat_session_manager=self.chat_session_manager,
@@ -243,12 +241,14 @@ class ASR_LLM_Manager:
                 self.character_name = avatar_data.get('avatar_name', '')
                 self.character_prompt = avatar_data.get('prompt', '')
                 self.avatar_opening_prompt = avatar_data.get('opening_prompt', '')
+                self.avatar_image_uri = avatar_data.get('image_uri', '')
                 logger.info(f"Loaded avatar data: name={self.character_name}, prompt_length={len(self.character_prompt) if self.character_prompt else 0}, opening_prompt_length={len(self.avatar_opening_prompt) if self.avatar_opening_prompt else 0}")
             else:
                 logger.warning(f"Failed to load avatar data for avatar_id: {self.avatar_id}")
                 self.character_name = ''
                 self.character_prompt = ''
                 self.avatar_opening_prompt = ''
+                self.avatar_image_uri = ''
             
             # Load user preferred name from users table
             preferred_name = self.chat_session_manager.load_user_preferred_name(self.user_id)
@@ -554,6 +554,19 @@ class ASR_LLM_Manager:
 
         filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
         return filtered[-count:]
+    
+    def get_last_image_url(self) -> str:
+        """
+        Get the last image URL from the messages.
+        """
+        found_image_url = False
+        for msg in reversed(self.messages):
+            if 'imageUrl' in msg and msg['imageUrl']:
+                print(f"Found Last image URL: {msg['imageUrl']}")
+                return msg['imageUrl']
+        if not found_image_url:
+            return self.avatar_image_uri
+        
 
     def get_filtered_messages_for_llm(self) -> List[Dict[str, str]]:
         """
@@ -589,7 +602,7 @@ class ASR_LLM_Manager:
                 logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
                 
                 # Process the conversation update with world agent
-                image_generated = await self.world_agent.process_conversation_update(recent_messages)
+                image_generated = await self.world_agent.process_conversation_update(recent_messages, self.get_last_image_url())
                 
                 if image_generated:
                     logger.info("World agent successfully generated and sent an image")
@@ -625,7 +638,7 @@ class ASR_LLM_Manager:
                 
                 # Process the conversation update with world agent
                 image_generated = loop.run_until_complete(
-                    self.world_agent.process_conversation_update(recent_messages)
+                    self.world_agent.process_conversation_update(recent_messages, self.get_last_image_url())
                 )
                 
                 if image_generated:

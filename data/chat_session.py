@@ -40,7 +40,7 @@ class ChatSessionManager:
                 return None
             
             query = """
-            SELECT avatar_name, prompt, opening_prompt
+            SELECT avatar_name, prompt, opening_prompt, image_uri
             FROM avatars 
             WHERE avatar_id = %s
             """
@@ -53,7 +53,8 @@ class ChatSessionManager:
                 return {
                     'avatar_name': avatar_data.get('avatar_name'),
                     'prompt': avatar_data.get('prompt'),
-                    'opening_prompt': avatar_data.get('opening_prompt')
+                    'opening_prompt': avatar_data.get('opening_prompt'),
+                    'image_uri': avatar_data.get('image_uri')
                 }
             else:
                 logger.warning(f"No avatar found with avatar_id: {avatar_id}")

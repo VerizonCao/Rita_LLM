@@ -45,7 +45,6 @@ class WorldAgent:
         self,
         character_system_prompt: str,
         mcp_server_path: str = "generation/chat_server.py",
-        image_url: str = None,
         room=None,  # LiveKit room for sending images
         loop: asyncio.AbstractEventLoop = None,
         chat_session_manager: ChatSessionManager = None,  # Chat session manager for saving image URLs
@@ -55,7 +54,6 @@ class WorldAgent:
     ):
         self.character_system_prompt = character_system_prompt
         self.mcp_server_path = mcp_server_path
-        self.image_url = image_url
         self.room = room
         self.loop = loop
         self._is_shutting_down = False  # Add shutdown flag
@@ -386,7 +384,7 @@ Keep your analysis brief and focused."""
         except Exception as e:
             logger.error(f"Error publishing image URL to LiveKit: {e}")
 
-    async def generate_and_send_image(self, prompt: str) -> bool:
+    async def generate_and_send_image(self, prompt: str, image_url: str = None) -> bool:
         """
         Generate an image using the provided prompt and send it via LiveKit.
         
@@ -400,7 +398,7 @@ Keep your analysis brief and focused."""
             logger.error("Image generator not available")
             return False
 
-        if not self.image_url:
+        if not image_url:
             logger.warning("No base image URL provided, skipping image generation")
             return False
 
@@ -422,7 +420,7 @@ Keep your analysis brief and focused."""
             
             input_params = {
                 "prompt": enhanced_prompt,
-                "input_image": self.image_url,
+                "input_image": image_url,
                 "aspect_ratio": "match_input_image",
                 "output_format": "jpg",
                 "go_fast": True
@@ -619,7 +617,7 @@ Keep your analysis brief and focused."""
             logger.error(f"Unexpected error during S3 upload: {e}")
             return None
 
-    async def process_conversation_update(self, recent_messages: List[Dict[str, str]]) -> bool:
+    async def process_conversation_update(self, recent_messages: List[Dict[str, str]], image_url: str = None) -> bool:
         """
         Process a conversation update and decide if an image should be generated.
         
@@ -636,7 +634,8 @@ Keep your analysis brief and focused."""
             if image_prompt:
                 logger.info(f"World agent decided to generate image: {image_prompt}")
                 # Generate and send the image
-                success = await self.generate_and_send_image(image_prompt)
+                s3_public_url = s3_manager.get_public_url_with_cache_check(image_url, expires_in=3600)
+                success = await self.generate_and_send_image(image_prompt, s3_public_url)
                 return success
             else:
                 logger.debug("World agent decided no image generation needed")
