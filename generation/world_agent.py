@@ -457,7 +457,7 @@ Keep your analysis brief and focused."""
                 
                 logger.info(f"Generated public URL for S3 key: {s3_public_url}")
                 
-                # 3. Save to database with s3_key as imageUrl and public URL as origin_image_url
+                # 3. Save to database with s3_key as imageUrl and public URL as live_image_url
                 if self.chat_session_manager and self.user_id and self.avatar_id:
                     try:
                         # Create a message with the S3 key and public URL
@@ -468,7 +468,7 @@ Keep your analysis brief and focused."""
                             imageUrl=s3_key,  # Store S3 key for permanent reference
                             assistant_name=self.assistant_name,
                             model="world_agent_image_generation",
-                            origin_image_url=s3_public_url  # Store public URL for immediate access
+                            live_image_url=s3_public_url  # Store public URL for immediate access
                         )
                         logger.info(f"Saved image to database - S3 key: {s3_key}, Public URL: {s3_public_url}")
                     except Exception as e:
