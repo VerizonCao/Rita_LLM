@@ -431,8 +431,11 @@ Keep your analysis brief and focused."""
             logger.info(f"Image generation input params: {input_params}")
             
             # Generate image
-            image_path = f"/tmp/world_agent_{int(time.time())}.jpg"
-            output_url = run_flux_model(input_params, image_path, self.image_generator)
+            output_url = run_flux_model(
+                input_params = input_params, 
+                download_to=None, 
+                ImageGenerator_PassIn=self.image_generator
+            )
             
             if output_url:
                 logger.info(f"Image generated successfully: {output_url}")
