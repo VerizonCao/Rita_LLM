@@ -9,64 +9,141 @@ mcp = FastMCP("character-image-generator")
 @mcp.tool()
 async def generate_character_image(prompt: str) -> str:
     """
-    Generate a new image of the character with carefully constrained visual logic.
+    Summarize how the character and setting should change, from user's ( camera's ) first person perspective.
+    
+    **This function is always triggered. You task is too mention how to change the background and character details shown in the image.**
+    You should carefully describe the change, even if the change is subtle (e.g., different hand position, slighly moving their head).
 
-    This tool should only be called when there is a meaningful change in the visual scene,
-    setting, outfit, pose, or background context.
+    **Response Requirements**
+    We consider three types of changes:
+    A. User(Camera) and character stay at the same positions, make appearance or small pose changes.
+       Same camera, same character framing. Editing either background, character pose, or character apparel.
+       Camera and character framing stays the same, we maintain identical camera angle, framing, and perspective. 
+       Only update the background, character pose, or character apparel that is visibly changed in the image.
+    B. One of user(camera) or character physically moved inside the scene. 
+       Here we would keep character apparel details and location the same. We may update background objects or pov-based changed details due to orientation change, or update character pose 
+       due to movement and new position.       
+       You should add or remove more details that isn't available in the old image but is visible in the new image.
+       In terms of conceptual scene-level details, we don't change any background and character aesthetic details. 
+       However this case may ask for more details to display in the image that is consistent with the old image. 
+       For example if camera is zooming out, we would be describing what isn't shown in the original image, but visible in the new image, 
+       for example you may say "camera zooms out, showing the full body of the character. 
+       Character has long and attractive legs, wearing a dark stocking. The background shows a bedroom with a bed and a closet."
+       Or for example, if User(Camera) moved, the pov might be showing a different side of the character and background. You should provide such details update too.
+       Another example, if user(Camera) moved from a remote view into a close up view ( across the restaurant table for example, or side by side with character ), 
+       The pov-related change should be reflected in the description.
+    C. A complete scene change.
+       Here you are allowed to interpret the new scene, character details however you like. However, in most cases, you should make minimum changes to the 
+       character apparel and pose details. You may focus on changing the background and camera-related pov details.
 
-    **Trigger this function in these cases:**
+    In any cases, we would focus either scene-level and character-level changes in specific categories, and provide a descriptive new set of details:
+    Examples of valid item to change:
+    Catergory Background:
+    * background/scene setting 
+       Consider specific locations change with very specific details and description. 
+       If the new location is a bedroom, is there a bed ? Is character sitting or lying on the bed, in what pose, where on the bed ?
+       What is the color of the bedframe and bedsheet ? Is there a window / a lamp / a closet ?
+       If the location changed, should lighting change ? What is the lighting like ? How does it shown on character and background ?
+       If the scene doesn't change, are we moving to a slightly different location inside the same scene, like moving from bed to closet ?
+    * background props addition or removal 
+       Whether we are switchign to a new scene, or moving to a slightly different location inside the same scene, 
+       what should be added or removed from background ? 
+       If the location changed, what should added or changed in the background ?
+    Catergory Character Pose:
+    * face facing direction 
+      ( Consider slightly change facing direction or slightly tilting the head.
+        You may use words like slightly to left, front, slightly to right, etc.
+        If mentioned, also mention eyes directed at front facing camera.
+    * pose (e.g standing, sitting, kneeling, or simply changing facing direction, etc, you may connect this with hand gesture or background)
+    * hand gesture and position, mention specfic hand gesture and position. Is the hand holding the face, the necklace, or any prop ?
+    Catergory Character Apparel:
+    * upperbody clothing, mention specfic style, color, and designs.
+    * lowerbody clothing, mention specfic style, color, and designs.
+    * shoes & socks, mention specfic style, color, and designs.
+    * hand prop (e.g what should character be holding in hand, or wearing like a wristband)
+    * facial apparels addition or removal (e.g glasses, hat, earrings, necklace, etc)
+    
+    Category Camera POV ( For Type B and C )
+    You should also consider the POV-based details related to background and character pose.
+    What is the camera looking at, ( for example looking through the window ?) 
+    What is the character position, and is the camera looking at from the front, side, top, or what angles ? What does that particular angle show regarding background ?
+    You are not limited to these categories, you may add any other item that is relevant to the change and IS VISIBLE IN THE NEW IMAGE.
 
-    1. The user explicitly asks for a new image or picture of the character.
-    2. The scene or location clearly changes (e.g., "They arrive at the beach", "We’re in the garden now").
-    3. The character’s outfit or hair has changed.
-    4. The character begins an action or gesture that visually alters their pose.
-    5. The emotional tone or lighting of the environment significantly shifts.
+    **Format Rules:**
+    - DO NOT mention the existing / old description of the item, focus on the new details.
+    - Do NOT include more than one person in the new descriptions.
+    - DO NOT mention any facial expressions or change the facical appearance details like eyes, mouth, etc.
+    - DO NOT use any emojis, special characters, or any markdown formatting. Use plain English text.
 
-    **Never call this if:**
-    - The change is only verbal or minor (e.g., blinking, looking sideways).
-    - The scene remains visually similar.
-    - The character has not consented to be shown.
+    **Coherence Rules:**
+    - Mention connection between the changes, your final response should be coherent. 
+      For example, if the character is driving a car, it is probably mentioned in the background to show car seat and window details.
+    - Use intuitive, straightforward, descriptive language. Don't use anything conceptual, abstract, vague, poetic, complex.
+    - Careful to not use words that have influence across different categories. 
+      For example, when describing a long female dress, you shouldn't use words like 'floor-length', 
+      as it may affect the background setting and camera framing to focus on 'floor' which is unnecessary.
+    - Subtle changes are allowed and encouraged:
+        for example if character and user are sitting down chatting, the only change could be just moving their hand to a different position,  
+        or changing their poses a bit, or small interaction with props. In this case, you should not mention background or clothing change.
+    - Always think about POV related changes.
+      The pov should always mimick how the user would see the scene with the character in it. If the character and user are sitting down at the 
+      restaurant table, the pov should be looking at the character from the front, showing off the booth/sofa etc. It shouldn't be looking at the side
+      of the character nor the sofa booth, unless the user is physically moved to that kind of pov.
+        
+    Consider our initial three types of changes: 
+    A. Camera and character framing stays the same, change either background , character apparel , or character pose.
+    B. Either user(camera) or character physically moved inside the scene, keep the same general background, character apparel.
+    C. A complete scene change.
+    
+    **Content Rules:**
+    - If under Type A, you should focus on only one major category to change ( background, character apparel, or character pose ). 
+      You are not allowed, for example, to mention both background and character pose change in the same response. One at a time.
+      The clothing & apparel change should only occur if 
+      a. User specifically asked for it.
+      b. The story line allowed it, like the character took off their clothes, or put on new clothes.
+      Basically, you shouldn't update the clothing & apparel in a consistent conversation occuring in the same location.
+      If the conversation doesn't invovle scene change or apparal change, simply make sutble hand position / pose change that is common within conversations.
+    - If under Type B, you should focus on the new details displayed in the image.
+      What has been added to the pov given the new relative position.
+    - If under Type C, you should focus on the new details regarding background. You may update character apparel and pose details, but you should focus on the background.
+    - Each item should be described in only one sentence. Don't give too much unnecessary details.
+    
+    **Maintain Consistency Rules:**
+    The ending prompt for what not to change:
+    You shall add the following to the end of your response:
+    For type A change, you shall 
+        Always add "Maintain identical camera angle, framing, and perspective"
+        And for keeping the same background, you shall add
+            "Maintain the same background, lighting, and subject placement."
+        And for keeping the same character pose, you shall add
+            "Maintain character pose, keep the person in the exact same position, scale, and pose."
+        And for keeping the same character apparel, you shall add
+            "Maintain the same cloth, apparels, accessories, hair styles, and other character appearance details."
+    For type B change, you should mention similar things, choose one or more from the following:
+        "Maintain the same background, lighting, and subject placement."
+        "Maintain the same character pose, keep the person in the exact same position, scale, and pose."
+        "Maintain the same cloth, apparels, accessories, hair styles, and other character appearance details."
+    For type C change, you should mention part of the following:
+        If no cloth change: "Maintain the same cloth, apparels, accessories, hair styles, and other character appearance details."
+        If no pose change: "Maintain the character pose, keep the person in the exact same position, scale, and pose."
 
-    **Prompt Template (LLM must follow this format strictly):**
-
-    Generate an image of the character with the following constraints:
-
-    - **Clothing & Outfit**: [Unchanged or describe new outfit in detail, e.g., "A pair of loose jeans, a tank top, and a pink hat."]
-    - **Haircut and Color**: [Unchanged or describe new hairstyle and/or color, e.g., "Curly hair, pink-colored."]
-    - **Facial Features**: Always keep facial features unchanged. Match original face structure, proportions, and identity.
-    - **Facial Expression**: [Typically unchanged, but very subtle changes like "a subtle smile" or "slightly raised eyebrow" are allowed.]
-    - **Body Size**: Unchanged.
-    - **Background**: [Context-driven. Vividly describe if changed, e.g., "A flourishing garden lies behind her."]
-    - **Color Tone**: Keep unchanged.
-    - **Image Style**: Keep unchanged.
-    - **Action and Props**: [Only if visually relevant, e.g., "Standing barefoot on the sand, one hand shielding eyes from the sun."]
-
-    **⚠ Rules:**
-    - Do NOT include more than one person in the image.
-    - DO NOT exaggerate expressions or change the face.
-    - Only generate if the scene meaningfully benefits from it.
-
-    📸 Example 1:
-    Clothing & Outfit: A pair of loose jeans, a tank top, and a pink hat.
-    Haircut and Color: Pink-colored hair, styled in soft curls.
-    Facial Features: Unchanged — match original facial structure and identity.
-    Facial Expression: A subtle smile.
-    Body Size: Unchanged.
-    Background: A flourishing garden lies behind her, filled with vibrant flowers and winding stone paths.
-    Color Tone: Unchanged.
-    Image Style: Unchanged.
-    Action and Props: Sitting on a stone bench, gently holding a teacup with both hands.
-
-    📸 Example 2:
-    Clothing & Outfit: Unchanged.
-    Haircut and Color: Curly hair, color unchanged.
-    Facial Features: Unchanged — retain the original look.
-    Facial Expression: Unchanged.
-    Body Size: Unchanged.
-    Background: The waves washed the beach, and there were scattered shells along the shoreline.
-    Color Tone: Unchanged.
-    Image Style: Unchanged.
-    Action and Props: Standing barefoot on the sand, one hand shielding eyes from the sun, looking out toward the ocean.
+    Example final response, of a Type A change focusing on character apparel, 
+    (do not copy verbatim, do not incude Type A or Type B in your response):
+    
+    Change upper clothing to a high-collar red military coat with gold trim to match official design.
+    Maintain identical camera angle, framing, and perspective.
+    Maintain the same background, lighting, and subject placement.
+    Maintain character pose, keep the person in the exact same position, scale, and pose. 
+    
+    Example final response, of a Type B/C change focusing on background & pov change:
+    
+    Camera move back, showing the full body of the character. 
+    The character has long and sexy legs and thighs, very sexy and curvy, a perferct body ratio.
+    As the camera zooms out, the character's is kneeling on the ground, with her legs visible.
+    camera angle is the same, framing shows more of the character's body, and perspective is the same.
+    Maintain the same character pose, keep the person in the exact same position, scale, and pose. 
+    Maintain the same background, lighting, and subject placement.
+    Maintain the same cloth, apparels, accessories, hair styles, and other character appearance details.
     """
 
     # This is a placeholder implementation
