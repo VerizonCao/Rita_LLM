@@ -451,7 +451,7 @@ Keep your analysis brief and focused."""
                 logger.info(f"Successfully uploaded image to S3: {s3_key}")
                 
                 # 2. Get public URL from S3 manager
-                s3_public_url = s3_manager.get_public_url(s3_key, expires_in=3600)
+                s3_public_url = s3_manager.get_public_url_with_cache_check(s3_key, expires_in=3600)
                 if not s3_public_url:
                     logger.error("Failed to generate public URL for S3 key")
                     # Send IMAGE_END signal even if public URL generation failed

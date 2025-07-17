@@ -33,4 +33,8 @@ replicate==1.0.7
 # AWS dependencies
 boto3>=1.26.0
 
+# Redis dependencies
+upstash-redis
+fastapi
+
 

@@ -13,6 +13,14 @@ from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
+# Import Redis manager for caching (import after logger to avoid circular imports)
+try:
+    from .redis import redis_manager
+except ImportError:
+    # If Redis is not available, we'll handle it gracefully
+    redis_manager = None
+    logger.warning("Redis manager not available, S3 URLs will not be cached")
+
 
 class S3Manager:
     """Centralized S3 client manager for Rita LLM."""
@@ -67,9 +75,9 @@ class S3Manager:
         """Check if S3 client is available."""
         return self.s3_client is not None
     
-    def get_public_url(self, s3_key: str, expires_in: int = 3600) -> Optional[str]:
+    def get_public_url_from_s3(self, s3_key: str, expires_in: int = 3600) -> Optional[str]:
         """
-        Generate a presigned URL for public access to an S3 object.
+        Generate a presigned URL for public access to an S3 object directly from S3.
         
         Args:
             s3_key: The S3 object key (e.g., 'rita-swap-images/user_id/avatar_id/filename.jpg')
@@ -102,6 +110,44 @@ class S3Manager:
         except Exception as e:
             logger.error(f"Unexpected error generating presigned URL for {s3_key}: {e}")
             return None
+    
+    def get_public_url_with_cache_check(self, s3_key: str, expires_in: int = 3600) -> Optional[str]:
+        """
+        Get a presigned URL for public access to an S3 object with Redis caching.
+        First checks Redis cache, then generates a new URL from S3 if not cached.
+        
+        Args:
+            s3_key: The S3 object key (e.g., 'rita-swap-images/user_id/avatar_id/filename.jpg')
+            expires_in: URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            Presigned URL if successful, None otherwise
+        """
+        # First check Redis cache with minimum TTL requirement (1 minute)
+        if redis_manager and redis_manager.is_available():
+            try:
+                cached_url = redis_manager.get_with_min_ttl(s3_key, min_ttl_seconds=60)
+                if cached_url:
+                    logger.debug(f"Retrieved cached presigned URL for S3 key: {s3_key}")
+                    return cached_url
+            except Exception as e:
+                # Gracefully handle Redis errors - don't fail the entire operation
+                logger.warning(f"Redis lookup failed for presigned URL, proceeding with S3 generation: {e}")
+        
+        # If not in cache or Redis failed, generate new URL from S3
+        presigned_url = self.get_public_url_from_s3(s3_key, expires_in)
+        
+        if presigned_url:
+            # Try to cache the new presigned URL in Redis (fire-and-forget)
+            if redis_manager and redis_manager.is_available():
+                try:
+                    redis_manager.set(s3_key, presigned_url, expires_in)
+                    logger.debug(f"Cached new presigned URL for S3 key: {s3_key}")
+                except Exception as e:
+                    # Log but don't fail - the URL is still valid even if we can't cache it
+                    logger.warning(f"Failed to cache presigned URL in Redis, but URL is still valid: {e}")
+        
+        return presigned_url
     
     def upload_file(self, file_content: bytes, s3_key: str, content_type: str = 'image/jpeg', metadata: Optional[dict] = None) -> bool:
         """

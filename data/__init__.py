@@ -26,6 +26,7 @@ from .message import ChatMessage, UserMessage, AssistantMessage
 from .chat_session import ChatSessionManager
 from .play_session import PlaySessionManager
 from .s3 import s3_manager, S3Manager
+from .redis import redis_manager, RedisManager
 
 __all__ = [
     'ChatSessionManager',
@@ -35,5 +36,7 @@ __all__ = [
     'DatabaseManager',
     'PlaySessionManager',
     's3_manager',
-    'S3Manager'
+    'S3Manager',
+    'redis_manager',
+    'RedisManager'
 ] 
