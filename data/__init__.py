@@ -25,6 +25,7 @@ from .database import DatabaseManager
 from .message import ChatMessage, UserMessage, AssistantMessage
 from .chat_session import ChatSessionManager
 from .play_session import PlaySessionManager
+from .s3 import s3_manager, S3Manager
 
 __all__ = [
     'ChatSessionManager',
@@ -32,5 +33,7 @@ __all__ = [
     'UserMessage',
     'AssistantMessage',
     'DatabaseManager',
-    'PlaySessionManager'
+    'PlaySessionManager',
+    's3_manager',
+    'S3Manager'
 ] 

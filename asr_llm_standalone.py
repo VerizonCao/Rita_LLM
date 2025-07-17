@@ -948,21 +948,18 @@ class ASR_LLM_Manager:
                 logger.info(f"Extracted S3 key for search: {search_key}")
             
             # Find and remove the message from the database messages
-            # Match by imageUrl or origin_image_url since either could be used for removal
+            # Match by imageUrL since either could be used for removal
             db_message_found = False
             for i, db_message in enumerate(current_messages):
-                # Check if the message matches by imageUrl or origin_image_url
+                # Check if the message matches by imageUrl
                 matches_image_url = (hasattr(db_message, 'imageUrl') and 
                                    db_message.imageUrl == search_key)
-                matches_origin_url = (hasattr(db_message, 'origin_image_url') and 
-                                    db_message.origin_image_url == search_key)
                 
-                if ((matches_image_url or matches_origin_url) and
+                if ((matches_image_url) and
                     db_message.role == 'assistant'):
                     
                     logger.info(f"Found image message in database to remove at index {i}: {db_message.to_dict()}")
-                    logger.info(f"Matched by imageUrl: {matches_image_url}, origin_image_url: {matches_origin_url}")
-                    
+                  
                     # Remove the message from the list
                     current_messages.pop(i)
                     db_message_found = True
