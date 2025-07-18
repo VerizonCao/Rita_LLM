@@ -47,7 +47,6 @@ class WorldAgent:
         mcp_server_path: str = "generation/chat_server.py",
         room=None,  # LiveKit room for sending images
         loop: asyncio.AbstractEventLoop = None,
-        chat_session_manager: ChatSessionManager = None,  # Chat session manager for saving image URLs
         user_id: str = None,  # User ID for database operations
         avatar_id: str = None,  # Avatar ID for database operations
         assistant_name: str = "Assistant",  # Assistant name for database operations
@@ -59,7 +58,6 @@ class WorldAgent:
         self._is_shutting_down = False  # Add shutdown flag
         
         # Database integration for saving image URLs
-        self.chat_session_manager: ChatSessionManager = chat_session_manager
         self.user_id = user_id
         self.avatar_id = avatar_id
         self.assistant_name = assistant_name
@@ -393,14 +391,16 @@ Keep your analysis brief and focused."""
             
         Returns:
             True if successful, False otherwise
+            Image edit prompt, str
+            Image url, str ( s3 key )
         """
         if not self.image_generator:
             logger.error("Image generator not available")
-            return False
+            return False, "", ""
 
         if not image_url:
             logger.warning("No base image URL provided, skipping image generation")
-            return False
+            return False, "", ""
 
         try:
             logger.info(f"Generating image with prompt: {prompt}")
@@ -444,7 +444,7 @@ Keep your analysis brief and focused."""
                     logger.error("Failed to upload image to S3, aborting")
                     # Send IMAGE_END signal even if S3 upload failed
                     await self.publish_frontend_stream_livekit("IMAGE_END", "")
-                    return False
+                    return False, "", ""
                 
                 logger.info(f"Successfully uploaded image to S3: {s3_key}")
                 
@@ -454,32 +454,11 @@ Keep your analysis brief and focused."""
                     logger.error("Failed to generate public URL for S3 key")
                     # Send IMAGE_END signal even if public URL generation failed
                     await self.publish_frontend_stream_livekit("IMAGE_END", "")
-                    return False
+                    return False, "", ""
                 
                 logger.info(f"Generated public URL for S3 key: {s3_public_url}")
                 
-                # 3. Save to database with s3_key as imageUrl and public URL
-                if self.chat_session_manager and self.user_id and self.avatar_id:
-                    try:
-                        # Create a message with the S3 key and public URL
-                        self.chat_session_manager.write_assistant_message_with_image(
-                            user_id=self.user_id,
-                            avatar_id=self.avatar_id,
-                            content=f"Generated image: {prompt}",
-                            imageUrl=s3_key,  # Store S3 key for permanent reference
-                            assistant_name=self.assistant_name,
-                            model="world_agent_image_generation",
-                        )
-                        logger.info(f"Saved image to database - S3 key: {s3_key}, Public URL: {s3_public_url}")
-                    except Exception as e:
-                        logger.error(f"Failed to save image to database: {e}")
-                        # Send IMAGE_END signal even if database save failed
-                        await self.publish_frontend_stream_livekit("IMAGE_END", "")
-                        return False
-                else:
-                    logger.warning("Chat session manager not available, skipping database save")
-                
-                # 4. Send the public URL via LiveKit
+                # 3. Send the public URL via LiveKit
                 await self.publish_image_url_livekit(s3_public_url, f"Generated image: {prompt}")
                 logger.info("Sent public image URL to frontend via frontend_stream")   
 
@@ -496,9 +475,9 @@ Keep your analysis brief and focused."""
                     logger.info("Sent IMAGE_END signal to frontend (no room available)")
                     send_end_success = False
 
-                # 5. Update character appearance with the successful prompt
+                # 4. Update character appearance with the successful prompt
                 self._update_character_appearance(prompt)
-                return send_end_success
+                return send_end_success, prompt, s3_key
 
                 
             else:
@@ -506,7 +485,7 @@ Keep your analysis brief and focused."""
                 # Send IMAGE_END signal even if generation failed
                 await self.publish_frontend_stream_livekit("IMAGE_END", "")
                 logger.info("Sent IMAGE_END signal to frontend (generation failed)")
-                return False
+                return False, "", ""
                 
         except Exception as e:
             logger.error(f"Error generating and sending image: {e}")
@@ -516,7 +495,7 @@ Keep your analysis brief and focused."""
                 logger.info("Sent IMAGE_END signal to frontend (exception occurred)")
             except Exception as signal_error:
                 logger.error(f"Error sending IMAGE_END signal: {signal_error}")
-            return False
+            return False, "", ""
 
     async def _send_image_to_livekit(self, image_path: str):
         """
@@ -625,7 +604,9 @@ Keep your analysis brief and focused."""
             recent_messages: List of the last 6 messages from character chat
             
         Returns:
-            True if image was generated, False otherwise
+            True if image was generated, False otherwise.
+            Image edit prompt, str
+            Image url, str ( s3 key )
         """
         try:
             # Analyze the conversation context
@@ -635,15 +616,15 @@ Keep your analysis brief and focused."""
                 logger.info(f"World agent decided to generate image: {image_prompt}")
                 # Generate and send the image
                 s3_public_url = s3_manager.get_public_url_with_cache_check(image_url, expires_in=3600)
-                success = await self.generate_and_send_image(image_prompt, s3_public_url)
-                return success
+                success, image_prompt, s3_key = await self.generate_and_send_image(image_prompt, s3_public_url)
+                return success, image_prompt, s3_key
             else:
                 logger.debug("World agent decided no image generation needed")
-                return False
+                return False, "", ""
                 
         except Exception as e:
             logger.error(f"Error processing conversation update: {e}")
-            return False
+            return False, "", ""
 
     async def cleanup(self):
         """Cleanup resources"""

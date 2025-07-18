@@ -110,7 +110,6 @@ class ASR_LLM_Manager:
                     mcp_server_path="generation/chat_server.py",  # Fixed MCP server path
                     room=room,
                     loop=loop,
-                    chat_session_manager=self.chat_session_manager,
                     user_id=self.user_id,
                     avatar_id=self.avatar_id,
                     assistant_name=self.character_name or "Assistant"
@@ -584,38 +583,6 @@ class ASR_LLM_Manager:
 
         return [msg for msg in self.messages if is_dialogue_message(msg)]
 
-    async def trigger_world_agent_analysis(self):
-        """
-        Trigger world agent analysis after a new message is added.
-        This should be called after the assistant message is added to self.messages.
-        """
-        if not self.image_swap or not self.world_agent:
-            logger.debug("World agent analysis skipped - image_swap disabled or world_agent not available")
-            return
-            
-        try:
-            logger.info("World agent analysis starting...")
-            # Get the last 6 messages for context
-            recent_messages = self.get_recent_messages(6)
-            
-            if recent_messages:
-                logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
-                
-                # Process the conversation update with world agent
-                image_generated = await self.world_agent.process_conversation_update(recent_messages, self.get_last_image_url())
-                
-                if image_generated:
-                    logger.info("World agent successfully generated and sent an image")
-                else:
-                    logger.debug("World agent decided no image generation was needed")
-            else:
-                logger.warning("No recent messages found for world agent analysis")
-                    
-        except Exception as e:
-            logger.error(f"Error triggering world agent analysis: {e}")
-        finally:
-            logger.info("World agent analysis completed")
-
     def trigger_world_agent_analysis_sync(self):
         """
         Synchronous wrapper that runs the async world agent analysis in a new event loop.
@@ -637,12 +604,30 @@ class ASR_LLM_Manager:
                 logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
                 
                 # Process the conversation update with world agent
-                image_generated = loop.run_until_complete(
+                image_generated, image_prompt, s3_key = loop.run_until_complete(
                     self.world_agent.process_conversation_update(recent_messages, self.get_last_image_url())
                 )
                 
                 if image_generated:
                     logger.info("World agent successfully generated and sent an image")
+                    self.messages.append({"role": "assistant", "content": image_prompt, "imageUrl": s3_key})
+                         
+                    # 3. Save to database with s3_key as imageUrl
+                    if self.chat_session_manager and self.user_id and self.avatar_id:
+                        try:
+                            # Create a message with the S3 key
+                            self.chat_session_manager.write_assistant_message_with_image(
+                                user_id=self.user_id,
+                                avatar_id=self.avatar_id,
+                                content=f"{image_prompt}",
+                                imageUrl=s3_key,  # Store S3 key for permanent reference
+                                assistant_name=self.character_name + ", image update",
+                                model="image_generation",
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to save image to database: {e}")
+                    else:
+                        logger.warning("Chat session manager not available, skipping database save")
                 else:
                     logger.debug("World agent decided no image generation was needed")
             else:
@@ -771,11 +756,6 @@ class ASR_LLM_Manager:
                             )
                             logger.info(f"Current response: {current_response}")
                             print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
-
-                            # Trigger world agent analysis after assistant message is added (non-blocking)
-                            logger.info("Starting world agent analysis in background task")
-                            asyncio.create_task(asyncio.to_thread(self.trigger_world_agent_analysis_sync))
-                            logger.info("World agent analysis task created, continuing with TTS flow")
                             
                             # Save LLM response to database
                             try:
@@ -792,8 +772,11 @@ class ASR_LLM_Manager:
                             
                             # Send DONE marker to frontend immediately via LiveKit
                             await self.publish_frontend_stream_livekit("DONE", "")
-                            
-                                                        
+                                          
+                            # Trigger world agent analysis after assistant message is added (non-blocking)
+                            logger.info("Starting world agent analysis in background task")
+                            asyncio.create_task(asyncio.to_thread(self.trigger_world_agent_analysis_sync))
+                            logger.info("World agent analysis task created, continuing with TTS flow")
                             break
 
                         try:
