@@ -34,9 +34,10 @@ def setup_telemetry(service_name: str = "rita-llm"):
         if headers_str:
             try:
                 for header in headers_str.split(","):
-                    key, value = header.strip().split("=")
-                    if key and value:  # Only add non-empty headers
-                        headers[key.strip()] = value.strip()
+                    if "=" in header:
+                        key, value = header.strip().split("=", 1)
+                        if key and value:  # Only add non-empty headers
+                            headers[key.strip()] = value.strip()
                 logger.debug("OTLP headers configured from environment")
             except Exception as e:
                 logger.error(f"Failed to parse OTLP headers: {e}")
