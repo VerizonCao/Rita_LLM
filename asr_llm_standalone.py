@@ -311,11 +311,13 @@ class ASR_LLM_Manager:
                 # No history exists, try to load opening_prompt from avatars table
                 opening_prompt = self.avatar_opening_prompt
                 if opening_prompt:
-                    # Add opening prompt as first assistant message
+                    # Add opening prompt as first assistant message, default image as first image message
                     opening_message = {"role": "assistant", "content": opening_prompt}
                     self.messages.append(opening_message)
+                    default_image_message = {"role": "assistant", "content": "", "imageUrl": self.avatar_image_uri}
+                    self.messages.append(default_image_message)
                     
-                    # Save opening prompt to database as first assistant message
+                    # Save opening prompt & first image to database as first assistant message
                     try:
                         self.chat_session_manager.write_assistant_message(
                             user_id=self.user_id,
@@ -323,6 +325,14 @@ class ASR_LLM_Manager:
                             content=opening_prompt,
                             assistant_name=self.character_name or "Assistant",
                             model="opening_prompt"  # Special model name to indicate this is an opening
+                        )
+                        self.chat_session_manager.write_assistant_message_with_image(
+                            user_id=self.user_id,
+                            avatar_id=self.avatar_id,
+                            content=self.character_name,
+                            imageUrl=self.avatar_image_uri,
+                            assistant_name=self.character_name or "Assistant",
+                            model="character_default_image"  # Special model name to indicate this is an opening
                         )
                         logger.info(f"Added opening prompt as first assistant message")
                     except Exception as e:
