@@ -448,18 +448,18 @@ Keep your analysis brief and focused."""
                 
                 logger.info(f"Successfully uploaded image to S3: {s3_key}")
                 
-                # 2. Get public URL from S3 manager
-                s3_public_url = s3_manager.get_public_url_with_cache_check(s3_key, expires_in=3600)
-                if not s3_public_url:
-                    logger.error("Failed to generate public URL for S3 key")
-                    # Send IMAGE_END signal even if public URL generation failed
-                    await self.publish_frontend_stream_livekit("IMAGE_END", "")
-                    return False, "", ""
+                # # 2. Get public URL from S3 manager
+                # s3_public_url = s3_manager.get_public_url_with_cache_check(s3_key, expires_in=3600)
+                # if not s3_public_url:
+                #     logger.error("Failed to generate public URL for S3 key")
+                #     # Send IMAGE_END signal even if public URL generation failed
+                #     await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                #     return False, "", ""
                 
-                logger.info(f"Generated public URL for S3 key: {s3_public_url}")
+                # logger.info(f"Generated public URL for S3 key: {s3_public_url}")
                 
                 # 3. Send the public URL via LiveKit
-                await self.publish_image_url_livekit(s3_public_url, f"Generated image: {prompt}")
+                await self.publish_image_url_livekit(s3_key, f"Generated image: {prompt}")
                 logger.info("Sent public image URL to frontend via frontend_stream")   
 
                 send_end_success = False
@@ -615,8 +615,8 @@ Keep your analysis brief and focused."""
             if image_prompt:
                 logger.info(f"World agent decided to generate image: {image_prompt}")
                 # Generate and send the image
-                s3_public_url = s3_manager.get_public_url_with_cache_check(image_url, expires_in=3600)
-                success, image_prompt, s3_key = await self.generate_and_send_image(image_prompt, s3_public_url)
+                input_s3_public_url = s3_manager.get_public_url_with_cache_check(image_url, expires_in=3600)
+                success, image_prompt, s3_key = await self.generate_and_send_image(image_prompt, input_s3_public_url)
                 return success, image_prompt, s3_key
             else:
                 logger.debug("World agent decided no image generation needed")
