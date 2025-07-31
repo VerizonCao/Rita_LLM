@@ -8,13 +8,18 @@ class LLM_System_Prompt:
         self.character_name = character_name
         self.user_preferred_name = user_preferred_name
         self.system_prompt = ""
+        self.hint_prompt = ""
         
         # Handle placeholders in character_prompt
         self.character_prompt = character_prompt
         if self.character_prompt:
             self.character_prompt = self.character_prompt.replace("{{user}}", self.user_preferred_name)
             self.character_prompt = self.character_prompt.replace("{{char}}", self.character_name)
-        
+    
+        self.build_system_prompt()
+        self.build_hint_prompt()
+    
+    def build_system_prompt(self):
         # ================================
         # Build system prompt with sections
         # ================================
@@ -117,9 +122,6 @@ class LLM_System_Prompt:
         self.system_prompt += ("""
             Structual Output Guidelines: 
             At the end of each response, you should output the world state update in the following format: "
-            WORLD STATE UPDATE
-            Location: <location_name> , always include, even if no change.
-            Time of the day: <time> , always include, even if no change.
             
             ----- Guidance For World State Output -----
             -- General guidance --
@@ -142,6 +144,11 @@ class LLM_System_Prompt:
             -- DO NOT INCLUDE --
             Do not include any character pose nor appearance in the world state update.
             Do not mention clothing in the world state update.
+            
+            -- Output Format --
+            WORLD STATE
+            Location: <location_name> , always include, even if no change.
+            Time of the day: <time> , always include, even if no change.
             """
         )
 
