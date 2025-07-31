@@ -318,7 +318,7 @@ class ASR_LLM_Manager:
                     # Add opening prompt as first assistant message, default image as first image message
                     opening_message = {"role": "assistant", "content": opening_prompt}
                     self.messages.append(opening_message)
-                    default_image_message = {"role": "assistant", "content": self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
+                    default_image_message = {"role": "assistant", "content": "Default Image: " + self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
                     self.messages.append(default_image_message)
                     
                     # Save opening prompt & first image to database as first assistant message
@@ -551,22 +551,56 @@ class ASR_LLM_Manager:
         """
         return self.current_usage.copy()
 
-    def get_recent_messages(self, count: int = 6) -> List[Dict[str, str]]:
+    def get_recent_messages(self, count: int = 6, exclude_image_bubbles: bool = True) -> List[Dict[str, str]]:
         """
         Get the last `count` non-image messages (user/assistant dialogue only).
-        Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field or model == 'world_agent_image_generation').
+        Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field).
         """
         def is_dialogue_message(msg):
             # Exclude if message has an imageUrl (image bubble)
             if 'imageUrl' in msg and msg['imageUrl']:
                 return False
-            # Exclude if model is world_agent_image_generation (image bubble)
-            if msg.get('model') == 'world_agent_image_generation':
+            return True
+        if exclude_image_bubbles:
+            filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
+        else:
+            filtered = self.messages
+        return filtered[-count:]
+    
+    def get_recent_messages_for_image_gen(self, count: int = 6) -> List[Dict[str, str]]:
+        """
+        Get the last `count` non-image messages (user/assistant dialogue only), 
+        last image bubble, and default image.
+
+        Args:
+            count (int, optional): number of messages to return. Defaults to 6.
+
+        Returns:
+            List[Dict[str, str]]: list of messages
+        """
+        def is_dialogue_message(msg):
+            # Exclude if message has an imageUrl (image bubble)
+            if 'imageUrl' in msg and msg['imageUrl']:
                 return False
             return True
-
-        filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
-        return filtered[-count:]
+        default_image_msg = self.messages[1] # always the second in list
+        messages_reversed = list(reversed(self.messages))
+        filtered = []
+        text_msg_count = 0
+        last_image_bubble_msg = None
+        for msg in messages_reversed:
+            if is_dialogue_message(msg):
+                if text_msg_count < count:
+                    filtered.append(msg)
+                    text_msg_count += 1
+            else:
+                if last_image_bubble_msg is None:
+                    last_image_bubble_msg = msg
+        if last_image_bubble_msg is not None and \
+            last_image_bubble_msg['imageUrl'] != default_image_msg['imageUrl']: # skip if last is the default image
+            filtered = [default_image_msg] + filtered # will be last, once reversed
+        filtered.append(last_image_bubble_msg) # will be first, once reversed
+        return list(reversed(filtered))
     
     def get_last_image_url(self, use_default_image: bool = True) -> str:
         """
@@ -581,23 +615,6 @@ class ASR_LLM_Manager:
                 return msg['imageUrl']
         if not found_image_url:
             return self.avatar_image_uri
-        
-
-    def get_filtered_messages_for_llm(self) -> List[Dict[str, str]]:
-        """
-        Get messages filtered for the character LLM (exclude image bubbles).
-        This prevents the LLM from learning to mimic image generation prompts.
-        """
-        def is_dialogue_message(msg):
-            # Exclude if message has an imageUrl (image bubble)
-            if 'imageUrl' in msg and msg['imageUrl']:
-                return False
-            # Exclude if model is world_agent_image_generation (image bubble)
-            if msg.get('model') == 'world_agent_image_generation':
-                return False
-            return True
-
-        return [msg for msg in self.messages if is_dialogue_message(msg)]
 
     def trigger_world_agent_analysis_sync(self):
         """
@@ -614,7 +631,7 @@ class ASR_LLM_Manager:
         try:
             logger.info("World agent analysis starting in separate thread...")
             # Get the last 6 messages for context
-            recent_messages = self.get_recent_messages(6)
+            recent_messages = self.get_recent_messages_for_image_gen(count=6)
             
             if recent_messages:
                 logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
@@ -708,7 +725,7 @@ class ASR_LLM_Manager:
 
         payload = {
             "model": "deepseek/deepseek-chat-v3-0324",
-            "messages": self.get_filtered_messages_for_llm(),
+            "messages": self.messages,
             "stream": True,
             "provider": {
                 'order': 
