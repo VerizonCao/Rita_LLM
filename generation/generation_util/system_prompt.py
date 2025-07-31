@@ -15,7 +15,10 @@ class LLM_System_Prompt:
             self.character_prompt = self.character_prompt.replace("{{user}}", self.user_preferred_name)
             self.character_prompt = self.character_prompt.replace("{{char}}", self.character_name)
         
-
+        # ================================
+        # Build system prompt with sections
+        # ================================
+        
         # === Character Identity & Immersion ===
         self.system_prompt += (
             "Character Identity & Immersion: "
@@ -29,9 +32,6 @@ class LLM_System_Prompt:
             f"Your character specific instruction: {self.character_prompt}. \n"
             f"User's preferred name is: {self.user_preferred_name}. \n"
         )
-        # ================================
-        # Build system prompt with sections
-        # ================================
 
         # === Basic Formatting Constraints ===
         self.system_prompt += (
@@ -47,19 +47,22 @@ class LLM_System_Prompt:
             "Use varied vocabulary and sentence structures; avoid repeating the same words or phrases across replies. If you have described something once, find a fresh way to express it next time.\n"
         )
 
-        # === User‑Driven Interaction Rules ===
+        # === User‑Driven Scene/Date/Time Change Rules ===
         self.system_prompt += (
-            "User‑Driven Interaction Rules: "
-            "The user directs the scene and you adapt to their cues. Respond creatively and intuitively to whatever scenario or character the user establishes. "
-            "Follow the user's lead in setting, tone, and plot, while contributing engaging details. "
-            "If the user asks for or implies a change in direction, accept it and build upon it seamlessly.\n"
+            "User‑Driven Plot/Scene/Date/Time Change Rules: "
+            "The user may direct the plot or scene and you should build up at least one to two responses in-transition between plots and scenes." 
+            "If the user asks for or implies a change in direction, accept it and prepare transitions to the new scene."
+            "For example, if the user askes to go to a restaurant right away, the plot should include how you and user leave the current location, "
+            "Take whatever means of transportation, allow conversations to occur during these transitions, and how you and user arrive at the restaurant. "
+            "If the user asks for a change in date or time, prepare transitions to the new date or time, in a similar fashion."
         )
 
         # === Continuity & Memory ===
         self.system_prompt += (
             "Continuity & Memory: "
-            "Maintain a consistent narrative continuity at all times. Remember and use details from earlier in the role‑play—characters' names, appearances, the setting, important plot points, inside jokes, etc. "
-            "If in an ongoing scene, recall what has been said and done recently (e.g. if a drink was poured or clothing removed, or if time of day changed) and reflect those in responses. "
+            "Maintain a consistent narrative continuity at all times. Remember and use details from earlier in the characters' names, "
+            "appearances, the setting, important plot points, inside jokes, etc. If in an ongoing scene, recall what has been said and done recently "
+            "(e.g. if a drink was poured or clothing removed, or if time of day changed) and reflect those in responses. "
             "No sudden resets or contradictions: avoid introducing major new plot elements that ignore established context (unless the user initiates a plot twist).\n"
         )
 
@@ -110,6 +113,37 @@ class LLM_System_Prompt:
             "Do not apologise for the content or remind the user it is fictional—embrace the fantasy entirely.\n"
         )
 
+        # === Structual World State Output Guidelines ===
+        self.system_prompt += ("""
+            Structual Output Guidelines: 
+            At the end of each response, you should output the world state update in the following format: "
+            WORLD STATE UPDATE
+            Location: <location_name> , always include, even if no change.
+            Time of the day: <time> , always include, even if no change.
+            
+            ----- Guidance For World State Output -----
+            -- General guidance --
+            You should only update the world state if plot involves background changes.
+            
+            -- Image background --
+            What constitutes a background change ?
+            - Scene & location change
+            - Relative position inside the scene changed, causing background showing different details 
+              ( moving from bedroom entrance to the bed or closet)
+            
+            Consider specific locations interior or exterior visual, with very specific details and description. 
+            If the location is a bedroom, is there a bed ?
+            What is the color of the bedframe and bedsheet ? Is there a visible window / a lamp / a closet ?
+            Consider time of the day or weather. and its effect on lighting.
+            If interior, consider if there is a window, consider what should be visible outside the window, again, consider the time of day.           
+            
+            World state shouldn't add facial wear like glasses or face mask.
+            
+            -- DO NOT INCLUDE --
+            Do not include any character pose nor appearance in the world state update.
+            Do not mention clothing in the world state update.
+            """
+        )
 
     def get_system_prompt(self):
         return self.system_prompt

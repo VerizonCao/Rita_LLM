@@ -241,13 +241,15 @@ class ASR_LLM_Manager:
                 self.character_prompt = avatar_data.get('prompt', '')
                 self.avatar_opening_prompt = avatar_data.get('opening_prompt', '')
                 self.avatar_image_uri = avatar_data.get('image_uri', '')
-                logger.info(f"Loaded avatar data: name={self.character_name}, prompt_length={len(self.character_prompt) if self.character_prompt else 0}, opening_prompt_length={len(self.avatar_opening_prompt) if self.avatar_opening_prompt else 0}")
+                self.avatar_img_caption = avatar_data.get('img_caption', '')
+                logger.info(f"Loaded avatar data: name={self.character_name}, prompt_length={len(self.character_prompt) if self.character_prompt else 0}, opening_prompt_length={len(self.avatar_opening_prompt) if self.avatar_opening_prompt else 0}, img_caption_length={len(self.avatar_img_caption) if self.avatar_img_caption else 0}")
             else:
                 logger.warning(f"Failed to load avatar data for avatar_id: {self.avatar_id}")
                 self.character_name = ''
                 self.character_prompt = ''
                 self.avatar_opening_prompt = ''
                 self.avatar_image_uri = ''
+                self.avatar_img_caption = ''
             
             # Load user preferred name from users table
             preferred_name = self.chat_session_manager.load_user_preferred_name(self.user_id)
@@ -264,6 +266,8 @@ class ASR_LLM_Manager:
             self.character_name = ''
             self.character_prompt = ''
             self.avatar_opening_prompt = ''
+            self.avatar_image_uri = ''
+            self.avatar_img_caption = ''
             self.user_preferred_name = ''
 
     def _load_test_images(self) -> list:
@@ -314,7 +318,7 @@ class ASR_LLM_Manager:
                     # Add opening prompt as first assistant message, default image as first image message
                     opening_message = {"role": "assistant", "content": opening_prompt}
                     self.messages.append(opening_message)
-                    default_image_message = {"role": "assistant", "content": "", "imageUrl": self.avatar_image_uri}
+                    default_image_message = {"role": "assistant", "content": self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
                     self.messages.append(default_image_message)
                     
                     # Save opening prompt & first image to database as first assistant message
@@ -329,7 +333,7 @@ class ASR_LLM_Manager:
                         self.chat_session_manager.write_assistant_message_with_image(
                             user_id=self.user_id,
                             avatar_id=self.avatar_id,
-                            content=self.character_name,
+                            content=self.avatar_img_caption,
                             imageUrl=self.avatar_image_uri,
                             assistant_name=self.character_name or "Assistant",
                             model="character_default_image"  # Special model name to indicate this is an opening
@@ -564,10 +568,12 @@ class ASR_LLM_Manager:
         filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
         return filtered[-count:]
     
-    def get_last_image_url(self) -> str:
+    def get_last_image_url(self, use_default_image: bool = True) -> str:
         """
         Get the last image URL from the messages.
         """
+        if use_default_image:
+            return self.avatar_image_uri
         found_image_url = False
         for msg in reversed(self.messages):
             if 'imageUrl' in msg and msg['imageUrl']:
@@ -615,7 +621,8 @@ class ASR_LLM_Manager:
                 
                 # Process the conversation update with world agent
                 image_generated, image_prompt, s3_key = loop.run_until_complete(
-                    self.world_agent.process_conversation_update(recent_messages, self.get_last_image_url())
+                    self.world_agent.process_conversation_update(recent_messages, 
+                                                                 self.get_last_image_url(use_default_image=True))
                 )
                 
                 if image_generated:

@@ -133,7 +133,7 @@ Keep your analysis brief and focused."""
         self.current_character_appearance = prompt
         # Refresh the world system prompt to include the new appearance
         self.world_system_prompt = self._create_world_system_prompt()
-        logger.info(f"Updated character appearance: {prompt}")
+        logger.info(f"Image editing prompt: {prompt}")
 
     def get_current_character_appearance(self) -> Optional[str]:
         """

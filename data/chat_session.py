@@ -32,7 +32,7 @@ class ChatSessionManager:
             avatar_id: Avatar identifier
             
         Returns:
-            Dictionary with avatar_name, prompt, and opening_prompt if found, None otherwise
+            Dictionary with avatar_name, prompt, opening_prompt, image_uri, and img_caption if found, None otherwise
         """
         try:
             if not self.db_manager.ensure_connection():
@@ -40,7 +40,7 @@ class ChatSessionManager:
                 return None
             
             query = """
-            SELECT avatar_name, prompt, opening_prompt, image_uri
+            SELECT avatar_name, prompt, opening_prompt, image_uri, img_caption
             FROM avatars 
             WHERE avatar_id = %s
             """
@@ -54,7 +54,8 @@ class ChatSessionManager:
                     'avatar_name': avatar_data.get('avatar_name'),
                     'prompt': avatar_data.get('prompt'),
                     'opening_prompt': avatar_data.get('opening_prompt'),
-                    'image_uri': avatar_data.get('image_uri')
+                    'image_uri': avatar_data.get('image_uri'),
+                    'img_caption': avatar_data.get('img_caption')
                 }
             else:
                 logger.warning(f"No avatar found with avatar_id: {avatar_id}")
