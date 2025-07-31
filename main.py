@@ -99,47 +99,51 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                 raw_json = data.data.decode("utf-8")
                 json_data = json.loads(raw_json)
 
-                # Check for IMAGE_MSG_REMOVE message type
+                # Get topic and type for routing
+                topic = json_data.get("topic")
                 message_type = json_data.get("type")
-                if message_type == "IMAGE_MSG_REMOVE":
-                    message_id = json_data.get("messageId")
-                    image_url = json_data.get("imageUrl")
-                    
-                    if message_id and image_url:
-                        logger.info(f"Received IMAGE_MSG_REMOVE request for messageId: {message_id}, imageUrl: {image_url}")
-                        
-                        # Access the ASR_LLM_Manager
-                        if  state.asr_llm_manager :
-                            
-                            # Call the remove_image_message method
-                            success = state.asr_llm_manager.remove_image_message(
-                                message_id=message_id,
-                                image_url=image_url
-                            )
-                            
-                            if success:
-                                logger.info(f"Successfully removed image message with ID: {message_id}")
-                            else:
-                                logger.warning(f"Failed to remove image message with ID: {message_id}")
-                        else:
-                            logger.error("ASR_LLM_Manager not available for image message removal")
-                    else:
-                        logger.error(f"Invalid IMAGE_MSG_REMOVE message: missing messageId or imageUrl")
-                    return
+                # Route based on topic
+                if topic == "user_input":
+                    # Handle user input messages
+                    if message_type == "message":
+                        message = json_data.get("message")
+                        if message:
+                            # Check if this is a duplicate of our last sent voice transcription
+                            if message == state.last_sent_voice_transcription:
+                                print("Received duplicate voice transcription, ignoring")
+                                state.last_sent_voice_transcription = None  # Reset after processing
+                                return
+                            # also remove it. 
+                            state.last_sent_voice_transcription = None  # Reset after processing
+                            print("ready to send text input to the agent: ", message)
+                            if state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
+                                state.audio_capture_wrapper.audio_capture.on_text_received(message)
 
-                # Handle regular text messages (existing logic)
-                message = json_data.get("message")
-                if message:
-                    # Check if this is a duplicate of our last sent voice transcription
-                    if message == state.last_sent_voice_transcription:
-                        print("Received duplicate voice transcription, ignoring")
-                        state.last_sent_voice_transcription = None  # Reset after processing
-                        return
-                    # also remove it. 
-                    state.last_sent_voice_transcription = None  # Reset after processing
-                    print("ready to send text input to the agent: ", message)
-                    if state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
-                        state.audio_capture_wrapper.audio_capture.on_text_received(message)
+                elif topic is None:
+                    if message_type == "IMAGE_MSG_REMOVE":
+                        message_id = json_data.get("messageId")
+                        image_url = json_data.get("imageUrl")
+                        
+                        if message_id and image_url:
+                            logger.info(f"Received IMAGE_MSG_REMOVE request for messageId: {message_id}, imageUrl: {image_url}")
+                            
+                            # Access the ASR_LLM_Manager
+                            if state.asr_llm_manager:
+                                # Call the remove_image_message method
+                                success = state.asr_llm_manager.remove_image_message(
+                                    message_id=message_id,
+                                    image_url=image_url
+                                )
+                                
+                                if success:
+                                    logger.info(f"Successfully removed image message with ID: {message_id}")
+                                else:
+                                    logger.warning(f"Failed to remove image message with ID: {message_id}")
+                            else:
+                                logger.error("ASR_LLM_Manager not available for image message removal")
+                        else:
+                            logger.error(f"Invalid IMAGE_MSG_REMOVE message: missing messageId or imageUrl")
+
             except Exception as e:
                 print(f"Error processing data: {e}")
 
