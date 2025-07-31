@@ -24,6 +24,7 @@ sys.path.append(str(project_root))
 # Import Chat utils
 from generation.generation_util.text_chunk_spliter import TextChunkSpliter
 from generation.generation_util.system_prompt import LLM_System_Prompt
+from generation.generation_util.text_format import replace_special_quotes_to_straight_quotes
 
 # Import chat db system
 from data import ChatSessionManager, DatabaseManager
@@ -144,10 +145,86 @@ class ASR_LLM_Manager:
         else:
             logger.warning("No event loop provided, TTS text publisher not started")
 
-        # Image sending functionality, remove me when we are actually have images from genai. 
-        self.test_images = self._load_test_images()
-        self.current_image_index = 0
+    # =========== Event Loop Related Functions ===========
+    async def cleanup(self):
+        """Gracefully cleanup resources before shutdown"""
+        self._is_shutting_down = True
+        try:
+            # Stop the text publisher worker
+            if self.tts_text_publisher_task:
+                try:
+                    self.tts_text_publisher_task.cancel()
+                    await self.tts_text_publisher_task
+                except asyncio.CancelledError:
+                    pass  # Expected when cancelling
+                except Exception as e:
+                    logger.warning(f"Error stopping text publisher task: {e}")
+                finally:
+                    self.tts_text_publisher_task = None
 
+            # Wait for any remaining queue items to be processed
+            try:
+                await asyncio.wait_for(self.tts_text_queue.join(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timeout waiting for text queue to finish")
+            except Exception as e:
+                logger.warning(f"Error waiting for text queue: {e}")
+
+            # Close text stream if it exists
+            if self.text_stream_writer:
+                try:
+                    await self.text_stream_writer.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing text stream: {e}")
+                finally:
+                    self.text_stream_writer = None
+
+            # Disconnect from room if it exists
+            if self.room:
+                try:
+                    await self.room.disconnect()
+                except Exception as e:
+                    logger.warning(f"Error disconnecting from room: {e}")
+                finally:
+                    self.room = None
+
+            # Cleanup world agent
+            if self.world_agent:
+                try:
+                    await self.world_agent.cleanup()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up world agent: {e}")
+                finally:
+                    self.world_agent = None
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+        finally:
+            self._is_shutting_down = False
+
+    @staticmethod
+    async def shutdown_event_loop():
+        """Safely shutdown the event loop"""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Cancel all running tasks
+                for task in asyncio.all_tasks(loop):
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            logger.warning(f"Error cancelling task: {e}")
+                
+                # Stop the loop
+                loop.stop()
+        except Exception as e:
+            logger.error(f"Error during event loop shutdown: {e}")
+
+    # =========== TTS Worker Related Functions ===========
     async def start_tts_text_publisher(self):
         """Start the background text publisher task"""
         if self.tts_text_publisher_task is None:
@@ -231,215 +308,7 @@ class ASR_LLM_Manager:
         
         logger.info("Text publisher worker thread stopped")
         
-    def _load_llm_data(self):
-        "Load character name, prompt, opening prompt(greeting), user nickname "
-        try:
-            # Load avatar data from avatars table
-            avatar_data = self.chat_session_manager.load_avatar_metadata(self.avatar_id)
-            if avatar_data:
-                self.character_name = avatar_data.get('avatar_name', '')
-                self.character_prompt = avatar_data.get('prompt', '')
-                self.avatar_opening_prompt = avatar_data.get('opening_prompt', '')
-                self.avatar_image_uri = avatar_data.get('image_uri', '')
-                self.avatar_img_caption = avatar_data.get('img_caption', '')
-                logger.info(f"Loaded avatar data: name={self.character_name}, prompt_length={len(self.character_prompt) if self.character_prompt else 0}, opening_prompt_length={len(self.avatar_opening_prompt) if self.avatar_opening_prompt else 0}, img_caption_length={len(self.avatar_img_caption) if self.avatar_img_caption else 0}")
-            else:
-                logger.warning(f"Failed to load avatar data for avatar_id: {self.avatar_id}")
-                self.character_name = ''
-                self.character_prompt = ''
-                self.avatar_opening_prompt = ''
-                self.avatar_image_uri = ''
-                self.avatar_img_caption = ''
-            
-            # Load user preferred name from users table
-            preferred_name = self.chat_session_manager.load_user_preferred_name(self.user_id)
-            if preferred_name:
-                self.user_preferred_name = preferred_name
-                logger.info(f"Loaded user preferred name: {self.user_preferred_name}")
-            else:
-                logger.warning(f"Failed to load preferred name for user_id: {self.user_id}")
-                self.user_preferred_name = ''
-                
-        except Exception as e:
-            logger.error(f"Error in _load_llm_data: {e}")
-            # Set default values on error
-            self.character_name = ''
-            self.character_prompt = ''
-            self.avatar_opening_prompt = ''
-            self.avatar_image_uri = ''
-            self.avatar_img_caption = ''
-            self.user_preferred_name = ''
-
-    def _load_test_images(self) -> list:
-        """Load all test images from the test folder"""
-        try:
-            test_folder = Path(__file__).parent / "util" / "test_images"
-            if not test_folder.exists():
-                logger.warning(f"Test folder not found: {test_folder}")
-                return []
-            
-            # Get all image files (png, jpg, jpeg, gif, etc.)
-            image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp"]
-            image_files = []
-            
-            for ext in image_extensions:
-                image_files.extend(glob.glob(str(test_folder / ext)))
-                image_files.extend(glob.glob(str(test_folder / ext.upper())))
-            
-            if not image_files:
-                logger.warning(f"No image files found in test folder: {test_folder}")
-                return []
-            
-            logger.info(f"Loaded {len(image_files)} test images: {[Path(f).name for f in image_files]}")
-            return image_files
-            
-        except Exception as e:
-            logger.error(f"Failed to load test images: {e}")
-            return []
-
-    def _load_conversation_history(self):
-        """Load conversation history from database and populate self.messages"""
-        try:
-            # Read history using simplified interface
-            history = self.chat_session_manager.read_history(
-                user_id=self.user_id,
-                avatar_id=self.avatar_id,
-                max_messages=50  # Load recent 50 messages
-            )
-            
-            # Add history to messages (system prompt is already first)
-            if history:
-                self.messages.extend(history)
-                logger.info(f"Loaded {len(history)} messages from conversation history")
-            else:
-                # No history exists, try to load opening_prompt from avatars table
-                opening_prompt = self.avatar_opening_prompt
-                if opening_prompt:
-                    # Add opening prompt as first assistant message, default image as first image message
-                    opening_message = {"role": "assistant", "content": opening_prompt}
-                    self.messages.append(opening_message)
-                    default_image_message = {"role": "assistant", "content": "Default Image: " + self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
-                    self.messages.append(default_image_message)
-                    
-                    # Save opening prompt & first image to database as first assistant message
-                    try:
-                        self.chat_session_manager.write_assistant_message(
-                            user_id=self.user_id,
-                            avatar_id=self.avatar_id,
-                            content=opening_prompt,
-                            assistant_name=self.character_name or "Assistant",
-                            model="opening_prompt"  # Special model name to indicate this is an opening
-                        )
-                        self.chat_session_manager.write_assistant_message_with_image(
-                            user_id=self.user_id,
-                            avatar_id=self.avatar_id,
-                            content=self.avatar_img_caption,
-                            imageUrl=self.avatar_image_uri,
-                            assistant_name=self.character_name or "Assistant",
-                            model="character_default_image"  # Special model name to indicate this is an opening
-                        )
-                        logger.info(f"Added opening prompt as first assistant message")
-                    except Exception as e:
-                        logger.error(f"Failed to save opening prompt to database: {e}")
-            
-        except Exception as e:
-            logger.error(f"Failed to load conversation history: {e}")
-
-    def speech_to_text(self, audio_file_path, speech_end_time):
-        """Convert speech to text using Whisper API"""
-        with open(audio_file_path, "rb") as audio_file:
-            transcription = self.openai_client.audio.transcriptions.create(
-                model="openai/whisper-large-v3-turbo",
-                file=audio_file,
-                language="en",  # Optional: Specify language
-            )
-        self.timing["speech_end_time"] = speech_end_time
-        self.timing["whisper_end_time"] = time.time()
-        logger.info(
-            f"Time to transcribe: {self.timing['whisper_end_time'] - speech_end_time:.2f} seconds"
-        )
-        logger.info(f"Transcription: {transcription.text}")
-
-        return transcription.text
-
-    async def cleanup(self):
-        """Gracefully cleanup resources before shutdown"""
-        self._is_shutting_down = True
-        try:
-            # Stop the text publisher worker
-            if self.tts_text_publisher_task:
-                try:
-                    self.tts_text_publisher_task.cancel()
-                    await self.tts_text_publisher_task
-                except asyncio.CancelledError:
-                    pass  # Expected when cancelling
-                except Exception as e:
-                    logger.warning(f"Error stopping text publisher task: {e}")
-                finally:
-                    self.tts_text_publisher_task = None
-
-            # Wait for any remaining queue items to be processed
-            try:
-                await asyncio.wait_for(self.tts_text_queue.join(), timeout=2.0)
-            except asyncio.TimeoutError:
-                logger.warning("Timeout waiting for text queue to finish")
-            except Exception as e:
-                logger.warning(f"Error waiting for text queue: {e}")
-
-            # Close text stream if it exists
-            if self.text_stream_writer:
-                try:
-                    await self.text_stream_writer.aclose()
-                except Exception as e:
-                    logger.warning(f"Error closing text stream: {e}")
-                finally:
-                    self.text_stream_writer = None
-
-            # Disconnect from room if it exists
-            if self.room:
-                try:
-                    await self.room.disconnect()
-                except Exception as e:
-                    logger.warning(f"Error disconnecting from room: {e}")
-                finally:
-                    self.room = None
-
-            # Cleanup world agent
-            if self.world_agent:
-                try:
-                    await self.world_agent.cleanup()
-                except Exception as e:
-                    logger.warning(f"Error cleaning up world agent: {e}")
-                finally:
-                    self.world_agent = None
-
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
-        finally:
-            self._is_shutting_down = False
-
-    @staticmethod
-    async def shutdown_event_loop():
-        """Safely shutdown the event loop"""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Cancel all running tasks
-                for task in asyncio.all_tasks(loop):
-                    if not task.done():
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-                        except Exception as e:
-                            logger.warning(f"Error cancelling task: {e}")
-                
-                # Stop the loop
-                loop.stop()
-        except Exception as e:
-            logger.error(f"Error during event loop shutdown: {e}")
-
+    # =========== Livekit Publishing Related Functions ===========
     async def publish_tts_text(self, text):
         """
         Queue text for publishing (non-blocking)
@@ -474,147 +343,23 @@ class ASR_LLM_Manager:
         except Exception as e:
             logger.error(f"Error publishing frontend stream to LiveKit: {e}")
 
-    async def send_image_to_livekit(self):
-        """
-        Send a test image to the LiveKit data channel with topic 'image_file'
-        Cycles through available test images
-        """
-        if self._is_shutting_down:
-            logger.warning("Skipping image send during shutdown")
-            return
-
-        if not self.room:
-            logger.error("No LiveKit room available for image sending")
-            return
-
-        if not self.test_images:
-            logger.warning("No test images available to send")
-            return
-
-        try:
-            # Get the current image file
-            image_path = self.test_images[self.current_image_index]
-            image_name = Path(image_path).name
-            
-            logger.info(f"Sending image: {image_name}")
-            
-            # Send the image file using LiveKit's send_file method
-            info = await self.room.local_participant.send_file(
-                file_path=image_path,
-                topic="image_file",
+    # =========== Core Generation Functions ===========
+    def speech_to_text(self, audio_file_path, speech_end_time):
+        """Convert speech to text using Whisper API"""
+        with open(audio_file_path, "rb") as audio_file:
+            transcription = self.openai_client.audio.transcriptions.create(
+                model="openai/whisper-large-v3-turbo",
+                file=audio_file,
+                language="en",  # Optional: Specify language
             )
-            
-            logger.info(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
-            
-            # Move to next image (cycle through available images)
-            self.current_image_index = (self.current_image_index + 1) % len(self.test_images)
-            
-        except Exception as e:
-            logger.error(f"Error sending image to LiveKit: {e}")
-            # Try to move to next image even if current one failed
-            self.current_image_index = (self.current_image_index + 1) % len(self.test_images)
+        self.timing["speech_end_time"] = speech_end_time
+        self.timing["whisper_end_time"] = time.time()
+        logger.info(
+            f"Time to transcribe: {self.timing['whisper_end_time'] - speech_end_time:.2f} seconds"
+        )
+        logger.info(f"Transcription: {transcription.text}")
 
-    def final_response_format_check(self, text):
-        response = text.strip()        
-        return response
-
-    def add_tts_tokens(self, segment: str):
-        """
-        Add TTS tokens based on character count of the segment.
-        
-        Args:
-            segment: The text segment being sent to TTS
-        """
-        if segment and not segment.startswith('[') and not segment.endswith(']'):
-            # Only count actual text content, ignore control flags like [START], [DONE], [INTERRUPTED]
-            char_count = len(segment)
-            self.current_usage["tts_tokens"] += char_count
-            logger.debug(f"Added {char_count} TTS characters: '{segment[:50]}{'...' if len(segment) > 50 else ''}'")
-        else:
-            logger.debug(f"Skipping TTS character count for control flag: {segment}")
-
-    def get_tts_tokens(self) -> int:
-        """
-        Get the current TTS token usage (dialogue only, excluding narrative).
-        
-        Returns:
-            int: Current TTS token count
-        """
-        return self.current_usage.get("tts_tokens", 0)
-
-    def get_token_usage(self) -> dict:
-        """
-        Get the complete token usage information.
-        
-        Returns:
-            dict: Complete token usage including prompt, completion, total, TTS, and cost
-        """
-        return self.current_usage.copy()
-
-    def get_recent_messages(self, count: int = 6, exclude_image_bubbles: bool = True) -> List[Dict[str, str]]:
-        """
-        Get the last `count` non-image messages (user/assistant dialogue only).
-        Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field).
-        """
-        def is_dialogue_message(msg):
-            # Exclude if message has an imageUrl (image bubble)
-            if 'imageUrl' in msg and msg['imageUrl']:
-                return False
-            return True
-        if exclude_image_bubbles:
-            filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
-        else:
-            filtered = self.messages
-        return filtered[-count:]
-    
-    def get_recent_messages_for_image_gen(self, count: int = 6) -> List[Dict[str, str]]:
-        """
-        Get the last `count` non-image messages (user/assistant dialogue only), 
-        last image bubble, and default image.
-
-        Args:
-            count (int, optional): number of messages to return. Defaults to 6.
-
-        Returns:
-            List[Dict[str, str]]: list of messages
-        """
-        def is_dialogue_message(msg):
-            # Exclude if message has an imageUrl (image bubble)
-            if 'imageUrl' in msg and msg['imageUrl']:
-                return False
-            return True
-        default_image_msg = self.messages[1] # always the second in list
-        messages_reversed = list(reversed(self.messages))
-        filtered = []
-        text_msg_count = 0
-        last_image_bubble_msg = None
-        for msg in messages_reversed:
-            if is_dialogue_message(msg):
-                if text_msg_count < count:
-                    filtered.append(msg)
-                    text_msg_count += 1
-            else:
-                if last_image_bubble_msg is None:
-                    last_image_bubble_msg = msg
-        if last_image_bubble_msg is not None and \
-            last_image_bubble_msg['imageUrl'] != default_image_msg['imageUrl']: # skip if last is the default image
-            filtered = [default_image_msg] + filtered # will be last, once reversed
-        filtered.append(last_image_bubble_msg) # will be first, once reversed
-        return list(reversed(filtered))
-    
-    def get_last_image_url(self, use_default_image: bool = True) -> str:
-        """
-        Get the last image URL from the messages.
-        """
-        if use_default_image:
-            return self.avatar_image_uri
-        found_image_url = False
-        for msg in reversed(self.messages):
-            if 'imageUrl' in msg and msg['imageUrl']:
-                print(f"Found Last image URL: {msg['imageUrl']}")
-                return msg['imageUrl']
-        if not found_image_url:
-            return self.avatar_image_uri
+        return transcription.text
 
     def trigger_world_agent_analysis_sync(self):
         """
@@ -673,24 +418,6 @@ class ASR_LLM_Manager:
             logger.info("World agent analysis completed in separate thread")
             loop.close()
     
-    def replace_special_quotes_to_straight_quotes(self, input_prompt: str) -> str:
-        """Replace special quotes to straight quotes"""
-        if not input_prompt:
-            return input_prompt
-            
-        # Replace various types of curly quotes with straight quotes
-        replacements = {
-            '“': '"',  # Left double quotation mark
-            '”': '"',  # Right double quotation mark         
-        }
-        
-        result = input_prompt
-        for special_quote, straight_quote in replacements.items():
-            if special_quote in result:
-                logger.info(f"Replacing {special_quote} with {straight_quote}")
-                result = result.replace(special_quote, straight_quote)
-        return result
-
     async def send_to_openrouter(self, text):
         """
         1. receives text from ASR or user input.
@@ -784,7 +511,7 @@ class ASR_LLM_Manager:
                             logger.info(f"Total TTS characters sent: {self.current_usage['tts_tokens']}")
 
                             # Add assistant message (single source of truth)
-                            current_response = self.final_response_format_check(current_response)
+                            current_response = current_response.strip()
                             self.messages.append(
                                 {"role": "assistant", "content": current_response}
                             )
@@ -831,7 +558,7 @@ class ASR_LLM_Manager:
                                           f"Cost: {self.current_usage['cost']}")
                             
                             content = data_obj["choices"][0]["delta"].get("content")
-                            content = self.replace_special_quotes_to_straight_quotes(content)
+                            content = replace_special_quotes_to_straight_quotes(content)
                             if content:
                                 current_response += content
                                 
@@ -917,6 +644,193 @@ class ASR_LLM_Manager:
             logger.warning(f"Skipping history appending due to user interruption")
         
         return self.current_usage["total_tokens"]  # Return the total tokens for backward compatibility
+
+    # =========== Character/Messages Init & Get Recent Messages ===========
+    def _load_llm_data(self):
+        "Load character name, prompt, opening prompt(greeting), user nickname "
+        try:
+            # Load avatar data from avatars table
+            avatar_data = self.chat_session_manager.load_avatar_metadata(self.avatar_id)
+            if avatar_data:
+                self.character_name = avatar_data.get('avatar_name', '')
+                self.character_prompt = avatar_data.get('prompt', '')
+                self.avatar_opening_prompt = avatar_data.get('opening_prompt', '')
+                self.avatar_image_uri = avatar_data.get('image_uri', '')
+                self.avatar_img_caption = avatar_data.get('img_caption', '')
+                logger.info(f"Loaded avatar data: name={self.character_name}, prompt_length={len(self.character_prompt) if self.character_prompt else 0}, opening_prompt_length={len(self.avatar_opening_prompt) if self.avatar_opening_prompt else 0}, img_caption_length={len(self.avatar_img_caption) if self.avatar_img_caption else 0}")
+            else:
+                logger.warning(f"Failed to load avatar data for avatar_id: {self.avatar_id}")
+                self.character_name = ''
+                self.character_prompt = ''
+                self.avatar_opening_prompt = ''
+                self.avatar_image_uri = ''
+                self.avatar_img_caption = ''
+            
+            # Load user preferred name from users table
+            preferred_name = self.chat_session_manager.load_user_preferred_name(self.user_id)
+            if preferred_name:
+                self.user_preferred_name = preferred_name
+                logger.info(f"Loaded user preferred name: {self.user_preferred_name}")
+            else:
+                logger.warning(f"Failed to load preferred name for user_id: {self.user_id}")
+                self.user_preferred_name = ''
+                
+        except Exception as e:
+            logger.error(f"Error in _load_llm_data: {e}")
+            # Set default values on error
+            self.character_name = ''
+            self.character_prompt = ''
+            self.avatar_opening_prompt = ''
+            self.avatar_image_uri = ''
+            self.avatar_img_caption = ''
+            self.user_preferred_name = ''
+
+    def _load_conversation_history(self):
+        """Load conversation history from database and populate self.messages"""
+        try:
+            # Read history using simplified interface
+            history = self.chat_session_manager.read_history(
+                user_id=self.user_id,
+                avatar_id=self.avatar_id,
+                max_messages=50  # Load recent 50 messages
+            )
+            
+            # Add history to messages (system prompt is already first)
+            if history:
+                self.messages.extend(history)
+                logger.info(f"Loaded {len(history)} messages from conversation history")
+            else:
+                # No history exists, try to load opening_prompt from avatars table
+                opening_prompt = self.avatar_opening_prompt
+                if opening_prompt:
+                    # Add opening prompt as first assistant message, default image as first image message
+                    opening_message = {"role": "assistant", "content": opening_prompt}
+                    self.messages.append(opening_message)
+                    default_image_message = {"role": "assistant", "content": "Default Image:\n" + self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
+                    self.messages.append(default_image_message)
+                    
+                    # Save opening prompt & first image to database as first assistant message
+                    try:
+                        self.chat_session_manager.write_assistant_message(
+                            user_id=self.user_id,
+                            avatar_id=self.avatar_id,
+                            content=opening_prompt,
+                            assistant_name=self.character_name or "Assistant",
+                            model="opening_prompt"  # Special model name to indicate this is an opening
+                        )
+                        self.chat_session_manager.write_assistant_message_with_image(
+                            user_id=self.user_id,
+                            avatar_id=self.avatar_id,
+                            content=self.avatar_img_caption,
+                            imageUrl=self.avatar_image_uri,
+                            assistant_name=self.character_name or "Assistant",
+                            model="character_default_image"  # Special model name to indicate this is an opening
+                        )
+                        logger.info(f"Added opening prompt as first assistant message")
+                    except Exception as e:
+                        logger.error(f"Failed to save opening prompt to database: {e}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load conversation history: {e}")
+
+    def get_recent_messages(self, count: int = 6, exclude_image_bubbles: bool = True) -> List[Dict[str, str]]:
+        """
+        Get the last `count` non-image messages (user/assistant dialogue only).
+        Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field).
+        """
+        def is_dialogue_message(msg):
+            # Exclude if message has an imageUrl (image bubble)
+            if 'imageUrl' in msg and msg['imageUrl']:
+                return False
+            return True
+        if exclude_image_bubbles:
+            filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
+        else:
+            filtered = self.messages
+        return filtered[-count:]
+    
+    def get_recent_messages_for_image_gen(self, count: int = 6) -> List[Dict[str, str]]:
+        """
+        Get the last `count` non-image messages (user/assistant dialogue only), 
+        last image bubble, and default image.
+
+        Args:
+            count (int, optional): number of messages to return. Defaults to 6.
+
+        Returns:
+            List[Dict[str, str]]: list of messages
+        """
+        def is_dialogue_message(msg):
+            # Exclude if message has an imageUrl (image bubble)
+            if 'imageUrl' in msg and msg['imageUrl']:
+                return False
+            return True
+        default_image_msg = self.messages[1] # always the second in list
+        messages_reversed = list(reversed(self.messages))
+        filtered = []
+        text_msg_count = 0
+        last_image_bubble_msg = None
+        for msg in messages_reversed:
+            if is_dialogue_message(msg):
+                if text_msg_count < count:
+                    filtered.append(msg)
+                    text_msg_count += 1
+            else:
+                if last_image_bubble_msg is None:
+                    last_image_bubble_msg = msg
+        if last_image_bubble_msg is not None and \
+            last_image_bubble_msg['imageUrl'] != default_image_msg['imageUrl']: # skip if last is the default image
+            filtered = [default_image_msg] + filtered # will be last, once reversed
+        filtered.append(last_image_bubble_msg) # will be first, once reversed
+        return list(reversed(filtered))
+    
+    def get_last_image_url(self, use_default_image: bool = True) -> str:
+        """
+        Get the last image URL from the messages.
+        """
+        if use_default_image:
+            return self.avatar_image_uri
+        found_image_url = False
+        for msg in reversed(self.messages):
+            if 'imageUrl' in msg and msg['imageUrl']:
+                print(f"Found Last image URL: {msg['imageUrl']}")
+                return msg['imageUrl']
+        if not found_image_url:
+            return self.avatar_image_uri
+
+    # =========== Usage Tracking Functions ===========
+    def add_tts_tokens(self, segment: str):
+        """
+        Add TTS tokens based on character count of the segment.
+        
+        Args:
+            segment: The text segment being sent to TTS
+        """
+        if segment and not segment.startswith('[') and not segment.endswith(']'):
+            # Only count actual text content, ignore control flags like [START], [DONE], [INTERRUPTED]
+            char_count = len(segment)
+            self.current_usage["tts_tokens"] += char_count
+            logger.debug(f"Added {char_count} TTS characters: '{segment[:50]}{'...' if len(segment) > 50 else ''}'")
+        else:
+            logger.debug(f"Skipping TTS character count for control flag: {segment}")
+
+    def get_tts_tokens(self) -> int:
+        """
+        Get the current TTS token usage (dialogue only, excluding narrative).
+        
+        Returns:
+            int: Current TTS token count
+        """
+        return self.current_usage.get("tts_tokens", 0)
+
+    def get_token_usage(self) -> dict:
+        """
+        Get the complete token usage information.
+        
+        Returns:
+            dict: Complete token usage including prompt, completion, total, TTS, and cost
+        """
+        return self.current_usage.copy()
 
     def _extract_s3_key_from_url(self, image_url: str) -> str:
         """
