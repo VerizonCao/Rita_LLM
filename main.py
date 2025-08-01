@@ -257,6 +257,16 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
 
     print("room connected!")
     
+    # Send agent-asr-enter signal to the room
+    signal_data = {
+        "topic": "room_signal",
+        "type": "agent-asr-enter",
+        "text": "Agent ASR has entered the room"
+    }
+    await room.local_participant.publish_data(
+        json.dumps(signal_data)
+    )
+    
     # Send Discord webhook notification
     await send_discord_webhook(room_name, state.current_user_id, state.current_avatar_id)
 
@@ -276,6 +286,17 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
         try:
             if state.user_left:
                 print("user left the room")
+                
+                # Send agent-asr-leave signal to the room
+                signal_data = {
+                    "topic": "room_signal",
+                    "type": "agent-asr-leave",
+                    "text": "Agent ASR is leaving the room"
+                }
+                if room is not None and room.local_participant is not None:
+                    await room.local_participant.publish_data(
+                        json.dumps(signal_data)
+                    )
                 
                 # Send Discord webhook notification for user leaving
                 await send_discord_webhook(room_name, state.current_user_id, state.current_avatar_id, "leaving")
