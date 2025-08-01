@@ -118,6 +118,14 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                             print("ready to send text input to the agent: ", message)
                             if state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
                                 state.audio_capture_wrapper.audio_capture.on_text_received(message)
+                    
+                    elif message_type == "require_hint":
+                        logger.info("Received require_hint message")
+                        if state.asr_llm_manager:
+                            # Call the generate_hint method
+                            await state.asr_llm_manager.generate_hint()
+                        else:
+                            logger.error("ASR_LLM_Manager not available for hint generation")
 
                 elif topic is None:
                     if message_type == "IMAGE_MSG_REMOVE":

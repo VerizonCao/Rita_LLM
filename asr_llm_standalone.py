@@ -102,6 +102,7 @@ class ASR_LLM_Manager:
             user_preferred_name=self.user_preferred_name,
         )
         self.system_prompt = system_prompt_obj.get_system_prompt()
+        self.hint_prompt = system_prompt_obj.get_hint_prompt()
 
         # World agent integration (enabled when image_swap is True)
         if self.image_swap:
@@ -376,7 +377,7 @@ class ASR_LLM_Manager:
         try:
             logger.info("World agent analysis starting in separate thread...")
             # Get the last 6 messages for context
-            recent_messages = self.get_recent_messages_for_image_gen(count=6)
+            recent_messages = self.get_recent_messages_with_default_image(count=6)
             
             if recent_messages:
                 logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
@@ -645,6 +646,75 @@ class ASR_LLM_Manager:
         
         return self.current_usage["total_tokens"]  # Return the total tokens for backward compatibility
 
+    async def generate_hint(self):
+        """
+        Generate hints for the user based on recent conversation history.
+        Uses the same recent messages pattern as image generation.
+        """
+        try:
+            # Get recent messages using the same method as image generation
+            recent_messages = self.get_recent_messages_with_default_image(count=6)
+            hint_prompt_msg = {
+                "role": "hint_generator ( System Prompt )",
+                "content": self.hint_prompt
+            }
+            hint_context_messsages = [hint_prompt_msg] + recent_messages
+            
+            # Create payload similar to send_to_openrouter but for hint generation
+            payload = {
+                "model": "mistralai/mistral-nemo",
+                "messages": hint_context_messsages,
+                "stream": False,  # Don't stream, wait for full response
+                "provider": {
+                    'sort': 'latency',
+                },
+                "usage": {
+                    "include": True
+                }
+            }
+
+            # Send request to OpenRouter
+            response = requests.post(
+                self.openrouter_url,
+                headers=self.openrouter_headers,
+                json=payload,
+                stream=False  # Don't stream
+            )
+            response.raise_for_status()
+            
+            # Parse the response
+            response_data = response.json()
+            hint_content = response_data["choices"][0]["message"]["content"]
+            
+            # Update token usage
+            if "usage" in response_data:
+                usage = response_data["usage"]
+                self.current_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                self.current_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+                self.current_usage["total_tokens"] += usage.get("total_tokens", 0)
+                self.current_usage["cost"] += usage.get("cost", 0)
+            
+            logger.info(f"Generated hints: {hint_content}...")
+            
+            # Publish to LiveKit with frontend_hint topic
+            if self.room:
+                try:
+                    await self.room.local_participant.publish_data(
+                        json.dumps({
+                            "topic": "frontend_hint",
+                            "type": "hint",
+                            "text": hint_content
+                        })
+                    )
+                    logger.info("Published hints to LiveKit frontend_hint topic")
+                except Exception as e:
+                    logger.error(f"Error publishing hints to LiveKit: {e}")
+            else:
+                logger.warning("No LiveKit room available for hint publishing")
+                
+        except Exception as e:
+            logger.error(f"Error generating hints: {e}")
+
     # =========== Character/Messages Init & Get Recent Messages ===========
     def _load_llm_data(self):
         "Load character name, prompt, opening prompt(greeting), user nickname "
@@ -708,7 +778,6 @@ class ASR_LLM_Manager:
                     self.messages.append(opening_message)
                     default_image_message = {"role": "assistant", "content": "Default Image:\n" + self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
                     self.messages.append(default_image_message)
-                    
                     # Save opening prompt & first image to database as first assistant message
                     try:
                         self.chat_session_manager.write_assistant_message(
@@ -732,11 +801,12 @@ class ASR_LLM_Manager:
             
         except Exception as e:
             logger.error(f"Failed to load conversation history: {e}")
-
+    '''
     def get_recent_messages(self, count: int = 6, exclude_image_bubbles: bool = True) -> List[Dict[str, str]]:
         """
         Get the last `count` non-image messages (user/assistant dialogue only).
         Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field).
+        Exclude system prompt.
         """
         def is_dialogue_message(msg):
             # Exclude if message has an imageUrl (image bubble)
@@ -748,11 +818,12 @@ class ASR_LLM_Manager:
         else:
             filtered = self.messages
         return filtered[-count:]
+    '''
     
-    def get_recent_messages_for_image_gen(self, count: int = 6) -> List[Dict[str, str]]:
+    def get_recent_messages_with_default_image(self, count: int = 6) -> List[Dict[str, str]]:
         """
         Get the last `count` non-image messages (user/assistant dialogue only), 
-        last image bubble, and default image.
+        last image bubble, and default image, excluding system prompt.
 
         Args:
             count (int, optional): number of messages to return. Defaults to 6.
@@ -765,10 +836,10 @@ class ASR_LLM_Manager:
             if 'imageUrl' in msg and msg['imageUrl']:
                 return False
             return True
-        default_image_msg = self.messages[1] # always the second in list
-        messages_reversed = list(reversed(self.messages))
+        messages_reversed = list(reversed(self.messages[1:])) # exclude system prompt
         filtered = []
         text_msg_count = 0
+        default_image_message = self.messages[2] # system prompt, opening prompt, default image
         last_image_bubble_msg = None
         for msg in messages_reversed:
             if is_dialogue_message(msg):
@@ -779,8 +850,8 @@ class ASR_LLM_Manager:
                 if last_image_bubble_msg is None:
                     last_image_bubble_msg = msg
         if last_image_bubble_msg is not None and \
-            last_image_bubble_msg['imageUrl'] != default_image_msg['imageUrl']: # skip if last is the default image
-            filtered = [default_image_msg] + filtered # will be last, once reversed
+            last_image_bubble_msg['imageUrl'] != default_image_message['imageUrl']: # skip if last is the default image
+            filtered = [default_image_message] + filtered # will be last, once reversed
         filtered.append(last_image_bubble_msg) # will be first, once reversed
         return list(reversed(filtered))
     
