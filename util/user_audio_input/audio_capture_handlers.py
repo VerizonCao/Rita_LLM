@@ -45,7 +45,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         self.audio_track = audio_track
         self.current_temp_file = None  # Track the current temporary file
 
-        self.text_input = None
+        self.user_input_text_id_tuple = None
         self.text_input_voice = []
 
     def interrupt_processing(self):
@@ -97,29 +97,30 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
         logger.info("Local VAD: User speech started")
         self.interrupt_processing()
 
-    def on_text_received(self, text: str):
+    def on_text_received(self, text: str, user_message_id: str):
         print("SimpleAudioCaptureHandler, text received:", text)
         self.is_speaking = False
         try:
-            self.text_input = text
+            self.user_input_text_id_tuple = (text, user_message_id)
         except Exception as e:
             logger.error(f"Error setting user text input: {e}")
 
     def has_text_input(self):
-        return self.text_input is not None
+        return self.user_input_text_id_tuple is not None
 
     def on_text_handled(self):
         try:
-            if not self.text_input:
+            if not self.user_input_text_id_tuple:
                 return
             if self.loop:
+                text, user_message_id = self.user_input_text_id_tuple
                 asyncio.run_coroutine_threadsafe(
-                    self.asr_llm_manager.send_to_openrouter(self.text_input),
+                    self.asr_llm_manager.send_to_openrouter(text, user_message_id),
                     self.loop
                 )
             else:
                 logger.error("No event loop available for async operation")
-            self.text_input = None
+            self.user_input_text_id_tuple = None
         except Exception as e:
             logger.error(f"Error processing user text input: {e}")
 
@@ -166,7 +167,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
 
                     if self.loop:
                         asyncio.run_coroutine_threadsafe(
-                            self.asr_llm_manager.send_to_openrouter(transcription_text),
+                            self.asr_llm_manager.send_to_openrouter(transcription_text, ''),
                             self.loop
                         )
                     else:

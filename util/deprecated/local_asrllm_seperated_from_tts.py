@@ -125,7 +125,7 @@ class SimpleAudioCaptureHandler(AudioCaptureEventHandler):
                         return
 
                     await self.asr_llm_manager.send_to_openrouter(
-                        transcription_text
+                        transcription_text, ''
                     )
 
                     if self.stop_processing.is_set():

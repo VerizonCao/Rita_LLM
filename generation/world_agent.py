@@ -326,7 +326,7 @@ Keep your analysis brief and focused."""
             logger.error(f"Error in direct OpenRouter analysis: {e}")
             return None
 
-    async def publish_frontend_stream_livekit(self, stream_type, content):
+    async def publish_frontend_stream_livekit(self, stream_type, content, message_id=''):
         """
         Publish frontend streaming content directly to LiveKit data channel
         """
@@ -343,14 +343,15 @@ Keep your analysis brief and focused."""
                 json.dumps({
                     "topic": "frontend_stream",
                     "type": stream_type,
-                    "text": content
+                    "text": content,
+                    "message_id": message_id
                 })
             )
             logger.debug(f"Published frontend stream: {stream_type} - {content[:50] if content else 'N/A'}")
         except Exception as e:
             logger.error(f"Error publishing frontend stream to LiveKit: {e}")
 
-    async def publish_image_url_livekit(self, image_url: str, content: str = None):
+    async def publish_image_url_livekit(self, image_url: str, content: str = None, message_id=''):
         """
         Publish image URL and content via frontend_stream data channel
         
@@ -370,7 +371,8 @@ Keep your analysis brief and focused."""
             data = {
                 "topic": "frontend_stream",
                 "type": "IMAGE_URL",
-                "imageUrl": image_url
+                "imageUrl": image_url,
+                "message_id": message_id
             }
             
             # Add content if provided
@@ -402,24 +404,16 @@ Keep your analysis brief and focused."""
             logger.warning("No base image URL provided, skipping image generation")
             return False, "", ""
 
+        image_gen_message_id = str(int(time.time() * 1000))
         try:
             logger.info(f"Generating image with prompt: {prompt}")
             
             # Send IMAGE_START signal to frontend
-            await self.publish_frontend_stream_livekit("IMAGE_START", "")
+            await self.publish_frontend_stream_livekit("IMAGE_START", content='', message_id=image_gen_message_id)
             logger.info("Sent IMAGE_START signal to frontend")
             
-            # Add important constraints to the prompt
-            enhanced_prompt = (
-                f"{prompt}, "
-                "[important]: never show more than 1 person in the image, "
-                "and keep the character's face consistent with the original image, matching facial features and proportions as closely as possible. "
-                "Prioritize changing the background over altering the character's appearance. "
-                "Keep the character's facial expression changes minimal, preserving their original look as much as possible."
-            )
-            
             input_params = {
-                "prompt": enhanced_prompt,
+                "prompt": prompt,
                 "input_image": image_url,
                 "aspect_ratio": "match_input_image",
                 "output_format": "jpg",
@@ -443,7 +437,7 @@ Keep your analysis brief and focused."""
                 if not s3_key:
                     logger.error("Failed to upload image to S3, aborting")
                     # Send IMAGE_END signal even if S3 upload failed
-                    await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                    await self.publish_frontend_stream_livekit("IMAGE_END", content='', message_id=image_gen_message_id)
                     return False, "", ""
                 
                 logger.info(f"Successfully uploaded image to S3: {s3_key}")
@@ -459,31 +453,31 @@ Keep your analysis brief and focused."""
                 # logger.info(f"Generated public URL for S3 key: {s3_public_url}")
                 
                 # 3. Send the public URL via LiveKit
-                await self.publish_image_url_livekit(s3_key, f"Generated image: {prompt}")
+                await self.publish_image_url_livekit(s3_key, f"Generated image: {prompt}", message_id=image_gen_message_id)
                 logger.info("Sent public image URL to frontend via frontend_stream")   
 
                 send_end_success = False
                 # Send IMAGE_END signal to frontend after successful image generation and sending
                 if self.room:
-                    await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                    await self.publish_frontend_stream_livekit("IMAGE_END", content='', message_id=image_gen_message_id)
                     logger.info("Sent IMAGE_END signal to frontend")
                     send_end_success = True
                 else:
                     logger.warning("No LiveKit room available for sending image file")
                     # Send IMAGE_END signal even if room is not available
-                    await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                    await self.publish_frontend_stream_livekit("IMAGE_END", content='', message_id=image_gen_message_id)
                     logger.info("Sent IMAGE_END signal to frontend (no room available)")
                     send_end_success = False
 
                 # 4. Update character appearance with the successful prompt
                 self._update_character_appearance(prompt)
-                return send_end_success, prompt, s3_key
+                return send_end_success, prompt, s3_key, image_gen_message_id
 
                 
             else:
                 logger.error("Image generation failed - no output URL received")
                 # Send IMAGE_END signal even if generation failed
-                await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                await self.publish_frontend_stream_livekit("IMAGE_END", content='', message_id=image_gen_message_id)
                 logger.info("Sent IMAGE_END signal to frontend (generation failed)")
                 return False, "", ""
                 
@@ -491,7 +485,7 @@ Keep your analysis brief and focused."""
             logger.error(f"Error generating and sending image: {e}")
             # Send IMAGE_END signal even if there was an exception
             try:
-                await self.publish_frontend_stream_livekit("IMAGE_END", "")
+                await self.publish_frontend_stream_livekit("IMAGE_END", content='', message_id=image_gen_message_id)
                 logger.info("Sent IMAGE_END signal to frontend (exception occurred)")
             except Exception as signal_error:
                 logger.error(f"Error sending IMAGE_END signal: {signal_error}")
@@ -616,8 +610,8 @@ Keep your analysis brief and focused."""
                 logger.info(f"World agent decided to generate image: {image_prompt}")
                 # Generate and send the image
                 input_s3_public_url = s3_manager.get_public_url_with_cache_check(image_url, expires_in=3600)
-                success, image_prompt, s3_key = await self.generate_and_send_image(image_prompt, input_s3_public_url)
-                return success, image_prompt, s3_key
+                success, image_prompt, s3_key, image_gen_message_id = await self.generate_and_send_image(image_prompt, input_s3_public_url)
+                return success, image_prompt, s3_key, image_gen_message_id
             else:
                 logger.debug("World agent decided no image generation needed")
                 return False, "", ""

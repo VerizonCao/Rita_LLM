@@ -125,6 +125,8 @@ class ASR_LLM_Manager:
         self.messages = [
             {"role": "system", "content": self.system_prompt},
         ]
+        self.current_llm_model = "deepseek/deepseek-chat-v3-0324"
+        self.current_image_gen_model = "black-forest-labs/flux-kontext-dev"
 
         # Load conversation history from database and populate messages
         self._load_conversation_history()
@@ -320,7 +322,7 @@ class ASR_LLM_Manager:
         else:
             print("Skipping text queuing during shutdown")
 
-    async def publish_frontend_stream_livekit(self, stream_type, content):
+    async def publish_frontend_stream_livekit(self, stream_type, content, message_id=''):
         """
         Publish frontend streaming content directly to LiveKit data channel
         """
@@ -337,7 +339,8 @@ class ASR_LLM_Manager:
                 json.dumps({
                     "topic": "frontend_stream",
                     "type": stream_type,
-                    "text": content
+                    "text": content,
+                    "message_id": message_id
                 })
             )
             logger.debug(f"Published frontend stream: {stream_type} - {content[:50] if content else 'N/A'}")
@@ -383,14 +386,14 @@ class ASR_LLM_Manager:
                 logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
                 
                 # Process the conversation update with world agent
-                image_generated, image_prompt, s3_key = loop.run_until_complete(
+                image_generated, image_prompt, s3_key, image_gen_message_id = loop.run_until_complete(
                     self.world_agent.process_conversation_update(recent_messages, 
                                                                  self.get_last_image_url(use_default_image=True))
                 )
                 
                 if image_generated:
                     logger.info("World agent successfully generated and sent an image")
-                    self.messages.append({"role": "assistant", "content": image_prompt, "imageUrl": s3_key})
+                    self.messages.append({"role": "assistant", "content": image_prompt, "imageUrl": s3_key, "message_id": image_gen_message_id})
                          
                     # 3. Save to database with s3_key as imageUrl
                     if self.chat_session_manager and self.user_id and self.avatar_id:
@@ -402,7 +405,8 @@ class ASR_LLM_Manager:
                                 content=f"{image_prompt}",
                                 imageUrl=s3_key,  # Store S3 key for permanent reference
                                 assistant_name=self.character_name + ", image update",
-                                model="image_generation",
+                                model=self.current_image_gen_model,
+                                message_id=image_gen_message_id
                             )
                         except Exception as e:
                             logger.error(f"Failed to save image to database: {e}")
@@ -419,7 +423,7 @@ class ASR_LLM_Manager:
             logger.info("World agent analysis completed in separate thread")
             loop.close()
     
-    async def send_to_openrouter(self, text):
+    async def send_to_openrouter(self, text, user_message_id):
         """
         1. receives text from ASR or user input.
         2. send text to LLM and get streaming response.
@@ -438,21 +442,23 @@ class ASR_LLM_Manager:
         consecutive_dialogue_chars = 0  # "Prev dialogue speak time" + "prev Narrative read time" = "New prev-dialogue sleep time"
 
         # Add user message to self.messages (single source of truth)
-        self.messages.append({"role": "user", "content": text})
+        self.messages.append({"role": "user", "content": text, 'message_id': user_message_id})
         
+        assistant_message_id = str(int(time.time() * 1000))
         # Save user message to database
         try:
             self.chat_session_manager.write_user_message(
                 user_id=self.user_id,
                 avatar_id=self.avatar_id,
                 content=text,
-                user_name=self.user_preferred_name or "User"
+                user_name=self.user_preferred_name or "User",
+                message_id=user_message_id
             )
         except Exception as e:
             logger.error(f"Failed to save user message to database: {e}")
 
         payload = {
-            "model": "deepseek/deepseek-chat-v3-0324",
+            "model": self.current_llm_model,
             "messages": self.messages,
             "stream": True,
             "provider": {
@@ -484,7 +490,7 @@ class ASR_LLM_Manager:
                         first_llm_token_received = True
                         
                         # Send START marker to frontend immediately via LiveKit
-                        await self.publish_frontend_stream_livekit("START", "")
+                        await self.publish_frontend_stream_livekit("START", content='', message_id=assistant_message_id)
                         
                         self.timing["llm_first_token_time"] = time.time()
                         if self.timing["whisper_end_time"] != -1:
@@ -514,7 +520,7 @@ class ASR_LLM_Manager:
                             # Add assistant message (single source of truth)
                             current_response = current_response.strip()
                             self.messages.append(
-                                {"role": "assistant", "content": current_response}
+                                {"role": "assistant", "content": current_response, "message_id": assistant_message_id}
                             )
                             logger.info(f"Current response: {current_response}")
                             print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
@@ -526,14 +532,15 @@ class ASR_LLM_Manager:
                                     avatar_id=self.avatar_id,
                                     content=current_response,
                                     assistant_name=self.character_name or "Assistant",
-                                    model="google/gemini-2.5-flash-preview-05-20"
+                                    model=self.current_llm_model,
+                                    message_id=assistant_message_id
                                 )
                                 
                             except Exception as e:
                                 logger.error(f"Failed to save LLM response to database: {e}")
                             
                             # Send DONE marker to frontend immediately via LiveKit
-                            await self.publish_frontend_stream_livekit("DONE", "")
+                            await self.publish_frontend_stream_livekit("DONE", content='', message_id=assistant_message_id)
                                           
                             # Trigger world agent analysis after assistant message is added (non-blocking)
                             logger.info("Starting world agent analysis in background task")
@@ -564,7 +571,7 @@ class ASR_LLM_Manager:
                                 current_response += content
                                 
                                 # Send delta content to frontend immediately via LiveKit
-                                await self.publish_frontend_stream_livekit("CONTENT", content)
+                                await self.publish_frontend_stream_livekit("CONTENT", content, message_id=assistant_message_id)
                                 
                                 # Track quotation marks for dialogue/narrative detection
                                 while track_char_index < len(current_response):
@@ -636,7 +643,7 @@ class ASR_LLM_Manager:
                         await self.publish_tts_text("[INTERRUPTED]")
                         
                         # Send INTERRUPTED marker to frontend immediately via LiveKit
-                        await self.publish_frontend_stream_livekit("INTERRUPTED", "")
+                        await self.publish_frontend_stream_livekit("INTERRUPTED", content='', message_id=assistant_message_id)
                         
                         # World agent handles image generation and sending (no legacy image swap)
                         
@@ -774,9 +781,12 @@ class ASR_LLM_Manager:
                 opening_prompt = self.avatar_opening_prompt
                 if opening_prompt:
                     # Add opening prompt as first assistant message, default image as first image message
-                    opening_message = {"role": "assistant", "content": opening_prompt}
+                    opening_message = {"role": "assistant", "content": opening_prompt, "message_id": ''}
                     self.messages.append(opening_message)
-                    default_image_message = {"role": "assistant", "content": "Default Image:\n" + self.avatar_img_caption, "imageUrl": self.avatar_image_uri}
+                    default_image_message = {"role": "assistant", 
+                                             "content": "Default Image:\n" + self.avatar_img_caption, 
+                                             "imageUrl": self.avatar_image_uri,
+                                             "message_id": ''}
                     self.messages.append(default_image_message)
                     # Save opening prompt & first image to database as first assistant message
                     try:
@@ -785,7 +795,8 @@ class ASR_LLM_Manager:
                             avatar_id=self.avatar_id,
                             content=opening_prompt,
                             assistant_name=self.character_name or "Assistant",
-                            model="opening_prompt"  # Special model name to indicate this is an opening
+                            model="opening_prompt",  # Special model name to indicate this is an opening
+                            message_id='default_greeting' # use default_greeting for default greeting
                         )
                         self.chat_session_manager.write_assistant_message_with_image(
                             user_id=self.user_id,
@@ -793,7 +804,8 @@ class ASR_LLM_Manager:
                             content=self.avatar_img_caption,
                             imageUrl=self.avatar_image_uri,
                             assistant_name=self.character_name or "Assistant",
-                            model="character_default_image"  # Special model name to indicate this is an opening
+                            model="character_default_image",  # Special model name to indicate this is an opening
+                            message_id='default_image' # use default_image for default image
                         )
                         logger.info(f"Added opening prompt as first assistant message")
                     except Exception as e:

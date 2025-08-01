@@ -139,12 +139,13 @@ class ChatSessionManager:
             if max_messages:
                 messages = messages[-max_messages:]
             
-            # Convert to LLM format (role + content only)
+            # Convert to LLM format (role + content + message_id only)
             llm_messages = []
             for msg in messages:
                 message_dict = {
                     'role': msg.role,
-                    'content': msg.content
+                    'content': msg.content,
+                    'message_id': msg.id
                 }
                 # Include imageUrl if present
                 if hasattr(msg, 'imageUrl') and msg.imageUrl:

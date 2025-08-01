@@ -196,9 +196,9 @@ class AudioCaptureLiveKit:
             self.is_running = False
             raise
 
-    def on_text_received(self, text: str):
+    def on_text_received(self, text, user_message_id):
         # when user direct type text as the input, now we just trigger the agent response.
-        self.event_handler.on_text_received(text)
+        self.event_handler.on_text_received(text, user_message_id)
 
     def stop(self, terminate: bool = False):
         """

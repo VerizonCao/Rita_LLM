@@ -107,6 +107,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                     # Handle user input messages
                     if message_type == "message":
                         message = json_data.get("message")
+                        user_message_id = json_data.get("message_id")
                         if message:
                             # Check if this is a duplicate of our last sent voice transcription
                             if message == state.last_sent_voice_transcription:
@@ -117,7 +118,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                             state.last_sent_voice_transcription = None  # Reset after processing
                             print("ready to send text input to the agent: ", message)
                             if state.audio_capture_wrapper and state.audio_capture_wrapper.audio_capture:
-                                state.audio_capture_wrapper.audio_capture.on_text_received(message)
+                                state.audio_capture_wrapper.audio_capture.on_text_received(message, user_message_id)
                     
                     elif message_type == "require_hint":
                         logger.info("Received require_hint message")
@@ -129,11 +130,11 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
 
                 elif topic is None:
                     if message_type == "IMAGE_MSG_REMOVE":
-                        message_id = json_data.get("messageId")
+                        message_id = json_data.get("message_id")
                         image_url = json_data.get("imageUrl")
                         
                         if message_id and image_url:
-                            logger.info(f"Received IMAGE_MSG_REMOVE request for messageId: {message_id}, imageUrl: {image_url}")
+                            logger.info(f"Received IMAGE_MSG_REMOVE request for message_id: {message_id}, imageUrl: {image_url}")
                             
                             # Access the ASR_LLM_Manager
                             if state.asr_llm_manager:
@@ -150,7 +151,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                             else:
                                 logger.error("ASR_LLM_Manager not available for image message removal")
                         else:
-                            logger.error(f"Invalid IMAGE_MSG_REMOVE message: missing messageId or imageUrl")
+                            logger.error(f"Invalid IMAGE_MSG_REMOVE message: missing message_id or imageUrl")
 
             except Exception as e:
                 print(f"Error processing data: {e}")
