@@ -256,6 +256,7 @@ class ChatSessionManager:
         user_id: str, 
         avatar_id: str, 
         content: str, 
+        message_id: str,
         user_name: str = "User"
     ) -> Optional[str]:
         """
@@ -265,6 +266,7 @@ class ChatSessionManager:
             user_id: User identifier
             avatar_id: Avatar identifier
             content: Message content
+            message_id: Unique message identifier
             user_name: User display name
             
         Returns:
@@ -273,7 +275,8 @@ class ChatSessionManager:
         user_message = UserMessage(
             content=content,
             sender_id=user_id,
-            sender_name=user_name
+            sender_name=user_name,
+            message_id=message_id
         )
         return self.write_message(user_id, avatar_id, user_message)
     
@@ -282,6 +285,7 @@ class ChatSessionManager:
         user_id: str, 
         avatar_id: str, 
         content: str, 
+        message_id: str,
         assistant_name: str = "Assistant",
         model: Optional[str] = None
     ) -> Optional[str]:
@@ -292,6 +296,7 @@ class ChatSessionManager:
             user_id: User identifier
             avatar_id: Avatar identifier
             content: Message content
+            message_id: Unique message identifier
             assistant_name: Assistant display name
             model: LLM model used
             
@@ -302,7 +307,8 @@ class ChatSessionManager:
             content=content,
             sender_id=avatar_id,
             sender_name=assistant_name,
-            model=model
+            model=model,
+            message_id=message_id
         )
         return self.write_message(user_id, avatar_id, assistant_message)
     
@@ -311,6 +317,7 @@ class ChatSessionManager:
         user_id: str, 
         avatar_id: str, 
         content: str, 
+        message_id: str,
         imageUrl: str,
         assistant_name: str = "Assistant",
         model: Optional[str] = None,
@@ -322,6 +329,7 @@ class ChatSessionManager:
             user_id: User identifier
             avatar_id: Avatar identifier
             content: Message content
+            message_id: Unique message identifier
             imageUrl: URL of the generated image
             assistant_name: Assistant display name
             model: LLM model used
@@ -335,6 +343,7 @@ class ChatSessionManager:
             sender_name=assistant_name,
             model=model,
             imageUrl=imageUrl,
+            message_id=message_id
         )
         return self.write_message(user_id, avatar_id, assistant_message)
 

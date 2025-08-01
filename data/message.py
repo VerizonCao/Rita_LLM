@@ -51,7 +51,7 @@ class ChatMessage(ABC):
             context: Context index for the message
             imageUrl: URL for image messages (optional)
         """
-        self.id = message_id or generate_short_id()
+        self.id = message_id or '' # empty string for default greeting & image
         self.content = content
         self.role = role
         self.sender_id = sender_id
