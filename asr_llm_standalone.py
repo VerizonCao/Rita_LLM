@@ -941,75 +941,50 @@ class ASR_LLM_Manager:
             logger.error(f"Error extracting S3 key from URL {image_url}: {e}")
             return image_url  # Return original URL if extraction fails
 
-    def remove_image_message(self, message_id: str, image_url: str) -> bool:
+    def remove_message(self, message_id: str) -> bool:
         """
-        Remove an image message from database.
-        Loads full message data only when needed for removal.
-        Matches by imageUrl since it's a unique identifier.
-        Handles both full S3 URLs and S3 keys.
+        Remove a message by its ID from both database and local messages list.
         
         Args:
-            message_id: The ID of the message to remove (from frontend, kept for logging)
-            image_url: The image URL to identify the message to remove (can be full S3 URL or S3 key)
+            message_id: The ID of the message to remove
             
         Returns:
-            True if message was found and removed, False otherwise
+            True if message was found and removed from local list, False otherwise
         """
         try:
-            logger.info(f"Attempting to remove image message with URL: {image_url}")
+            logger.info(f"Attempting to remove message with ID: {message_id}")
             
-            # Load full messages from database (only when needed)
-            if not self.chat_session_manager or not self.user_id or not self.avatar_id:
-                logger.error("Chat session manager not available for image message removal")
-                return False
+            # Step 1: Try to remove from database (no matter what result)
+            db_removed = False
+            if self.chat_session_manager and self.user_id and self.avatar_id:
+                db_removed = self.chat_session_manager.remove_message_by_id(
+                    user_id=self.user_id,
+                    avatar_id=self.avatar_id,
+                    message_id=message_id
+                )
+                if db_removed:
+                    logger.info(f"Successfully removed message {message_id} from database")
+                else:
+                    logger.warning(f"Message {message_id} not found in database or failed to remove")
+            else:
+                logger.warning("Chat session manager not available for database removal")
             
-            current_messages = self.chat_session_manager.read_full_history(
-                user_id=self.user_id,
-                avatar_id=self.avatar_id
-            )
-            
-            # Extract S3 key if the URL is a full S3 URL
-            search_key = image_url
-            if 'amazonaws.com' in image_url and '?' in image_url:
-                search_key = self._extract_s3_key_from_url(image_url)
-                logger.info(f"Extracted S3 key for search: {search_key}")
-            
-            # Find and remove the message from the database messages
-            # Match by imageUrL since either could be used for removal
-            db_message_found = False
-            for i, db_message in enumerate(current_messages):
-                # Check if the message matches by imageUrl
-                matches_image_url = (hasattr(db_message, 'imageUrl') and 
-                                   db_message.imageUrl == search_key)
-                
-                if ((matches_image_url) and
-                    db_message.role == 'assistant'):
-                    
-                    logger.info(f"Found image message in database to remove at index {i}: {db_message.to_dict()}")
-                  
-                    # Remove the message from the list
-                    current_messages.pop(i)
-                    db_message_found = True
+            # Step 2: Remove from local messages list (no matter what database result was)
+            local_removed = False
+            for i, msg in enumerate(self.messages):
+                if msg.get('message_id') == message_id:
+                    logger.info(f"Found message in local list at index {i}: {msg}")
+                    self.messages.pop(i)
+                    local_removed = True
                     break
             
-            if not db_message_found:
-                logger.warning(f"Image message not found in database with URL/key: {search_key}")
+            if not local_removed:
+                logger.warning(f"Message {message_id} not found in local messages list")
                 return False
             
-            # Update the database session with the modified messages list
-            session_id = self.chat_session_manager.update_session_messages(
-                user_id=self.user_id,
-                avatar_id=self.avatar_id,
-                messages=current_messages
-            )
-            
-            if session_id:
-                logger.info(f"Successfully updated database session {session_id} after removing image message")
-                return True
-            else:
-                logger.error("Failed to update database session after removing image message")
-                return False
+            logger.info(f"Successfully removed message {message_id} from local list")
+            return True
                 
         except Exception as e:
-            logger.error(f"Error removing image message: {e}")
+            logger.error(f"Error removing message: {e}")
             return False

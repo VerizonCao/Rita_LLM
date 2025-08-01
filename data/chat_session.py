@@ -348,54 +348,54 @@ class ChatSessionManager:
         )
         return self.write_message(user_id, avatar_id, assistant_message)
 
-    def update_session_messages(
+    def remove_message_by_id(
         self, 
         user_id: str, 
         avatar_id: str, 
-        messages: List[ChatMessage]
-    ) -> Optional[str]:
+        message_id: str
+    ) -> bool:
         """
-        Update the entire messages list for a chat session.
+        Remove a specific message from a chat session by its message ID.
         
         Args:
             user_id: User identifier
             avatar_id: Avatar identifier
-            messages: List of ChatMessage objects to replace the current messages
+            message_id: ID of the message to remove
             
         Returns:
-            Session ID if successful, None otherwise
+            True if message was successfully removed, False otherwise
         """
         try:
             if not self.db_manager.ensure_connection():
                 logger.error("Failed to establish database connection")
-                return None
+                return False
             
-            # Convert messages to JSONB format
-            from .message import messages_to_jsonb
-            messages_jsonb = messages_to_jsonb(messages)
-            
-            # Use INSERT with ON CONFLICT to update the entire messages list
+            # Use JSONB operations to remove the message directly in SQL
             query = """
-            INSERT INTO chat_sessions (user_id, avatar_id, messages)
-            VALUES (%s, %s, %s::jsonb)
-            ON CONFLICT (user_id, avatar_id) DO
-              UPDATE
-                SET
-                  messages     = EXCLUDED.messages,
-                  updated_time = CURRENT_TIMESTAMP
+            UPDATE chat_sessions
+            SET 
+                messages = (
+                    SELECT jsonb_agg(msg)
+                    FROM jsonb_array_elements(messages) AS msg
+                    WHERE msg->>'id' != %s
+                ),
+                updated_time = CURRENT_TIMESTAMP
+            WHERE user_id = %s AND avatar_id = %s
             RETURNING chat_session_id;
             """
             
             result = self.db_manager.execute_query(
                 query, 
-                (user_id, avatar_id, messages_jsonb)
+                (message_id, user_id, avatar_id)
             )
             
             if result and len(result) > 0:
-                return result[0]['chat_session_id']
-            
-            return None
-            
+                logger.info(f"Successfully removed message {message_id} from session {result[0]['chat_session_id']}")
+                return True
+            else:
+                logger.warning(f"No chat session found or message {message_id} not found")
+                return False
+                
         except Exception as e:
-            logger.error(f"Error updating session messages: {e}")
-            return None
+            logger.error(f"Error removing message by ID: {e}")
+            return False

@@ -127,31 +127,26 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                             await state.asr_llm_manager.generate_hint()
                         else:
                             logger.error("ASR_LLM_Manager not available for hint generation")
-
-                elif topic is None:
-                    if message_type == "IMAGE_MSG_REMOVE":
+                    
+                    elif message_type == "remove_message":
                         message_id = json_data.get("message_id")
-                        image_url = json_data.get("imageUrl")
                         
-                        if message_id and image_url:
-                            logger.info(f"Received IMAGE_MSG_REMOVE request for message_id: {message_id}, imageUrl: {image_url}")
+                        if message_id:
+                            logger.info(f"Received remove_message request for message_id: {message_id}")
                             
                             # Access the ASR_LLM_Manager
                             if state.asr_llm_manager:
-                                # Call the remove_image_message method
-                                success = state.asr_llm_manager.remove_image_message(
-                                    message_id=message_id,
-                                    image_url=image_url
-                                )
+                                # Call the remove_message method
+                                success = state.asr_llm_manager.remove_message(message_id=message_id)
                                 
                                 if success:
-                                    logger.info(f"Successfully removed image message with ID: {message_id}")
+                                    logger.info(f"Successfully removed message with ID: {message_id}")
                                 else:
-                                    logger.warning(f"Failed to remove image message with ID: {message_id}")
+                                    logger.warning(f"Failed to remove message with ID: {message_id}")
                             else:
-                                logger.error("ASR_LLM_Manager not available for image message removal")
+                                logger.error("ASR_LLM_Manager not available for message removal")
                         else:
-                            logger.error(f"Invalid IMAGE_MSG_REMOVE message: missing message_id or imageUrl")
+                            logger.error(f"Invalid remove_message request: missing message_id")
 
             except Exception as e:
                 print(f"Error processing data: {e}")
