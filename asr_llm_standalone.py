@@ -464,10 +464,11 @@ class ASR_LLM_Manager:
             "provider": {
                 'order': 
                 [
-                    'deepinfra/fp4',
                     'lambda/fp8',
+                    'deepinfra/fp4',
                     'baseten/fp8',
                 ]
+                # 'sort': 'latency',
                 },
             "usage": {
                 "include": True
@@ -662,14 +663,14 @@ class ASR_LLM_Manager:
             # Get recent messages using the same method as image generation
             recent_messages = self.get_recent_messages_with_default_image(count=6)
             hint_prompt_msg = {
-                "role": "hint_generator ( System Prompt )",
+                "role": "system",
                 "content": self.hint_prompt
             }
             hint_context_messsages = [hint_prompt_msg] + recent_messages
             
             # Create payload similar to send_to_openrouter but for hint generation
             payload = {
-                "model": "mistralai/mistral-nemo",
+                "model": "deepseek/deepseek-chat-v3-0324",
                 "messages": hint_context_messsages,
                 "stream": False,  # Don't stream, wait for full response
                 "provider": {
