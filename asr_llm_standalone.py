@@ -674,7 +674,11 @@ class ASR_LLM_Manager:
                 "messages": hint_context_messsages,
                 "stream": False,  # Don't stream, wait for full response
                 "provider": {
-                    'sort': 'latency',
+                    'order': 
+                    [
+                        'lambda/fp8',
+                        'baseten/fp8',
+                    ]
                 },
                 "usage": {
                     "include": True
