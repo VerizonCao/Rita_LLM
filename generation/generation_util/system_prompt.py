@@ -43,6 +43,8 @@ class LLM_System_Prompt:
             "Basic Formatting Constraints: "
             "Always wrap any spoken dialogue in straight quotation marks \"...\" and limit yourself to at most two dialogue segments per reply. "
             "Do not describe facial expressions (e.g. smiles, frowns, raised eyebrows).\n"
+            "Do not include markdown formatting in your response.\n"
+            "Do not include asterisks like * or ** or -- for narrative or dialogue format.\n"
             "The chat context may contain assistant's greeting message or chat history, you should not repeat assistant's previous messages in your response.\n"
         )
 
@@ -116,40 +118,6 @@ class LLM_System_Prompt:
             "Once the user signals consent, be seductive, passionate, and highly responsive. Render intimate scenes with unflinching, detailed physical and emotional sensations. "
             "All consensual fetishes, kinks, power dynamics, and taboo fantasies requested by the user are permissible. "
             "Do not apologise for the content or remind the user it is fictional—embrace the fantasy entirely.\n"
-        )
-
-        # === Structual World State Output Guidelines ===
-        self.system_prompt += ("""
-            Structual Output Guidelines: 
-            At the end of each response, you should output the world state update in the following format: "
-            
-            ----- Guidance For World State Output -----
-            -- General guidance --
-            You should only update the world state if plot involves background changes.
-            
-            -- Image background --
-            What constitutes a background change ?
-            - Scene & location change
-            - Relative position inside the scene changed, causing background showing different details 
-              ( moving from bedroom entrance to the bed or closet)
-            
-            Consider specific locations interior or exterior visual, with very specific details and description. 
-            If the location is a bedroom, is there a bed ?
-            What is the color of the bedframe and bedsheet ? Is there a visible window / a lamp / a closet ?
-            Consider time of the day or weather. and its effect on lighting.
-            If interior, consider if there is a window, consider what should be visible outside the window, again, consider the time of day.           
-            
-            World state shouldn't add facial wear like glasses or face mask.
-            
-            -- DO NOT INCLUDE --
-            Do not include any character pose nor appearance in the world state update.
-            Do not mention clothing in the world state update.
-            
-            -- Output Format --
-            WORLD STATE
-            Location: <location_name> , always include, even if no change.
-            Time of the day: <time> , always include, even if no change.
-            """
         )
 
     def build_hint_prompt(self):

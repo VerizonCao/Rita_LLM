@@ -51,7 +51,6 @@ class WorldAgent:
         avatar_id: str = None,  # Avatar ID for database operations
         assistant_name: str = "Assistant",  # Assistant name for database operations
     ):
-        self.character_system_prompt = character_system_prompt
         self.mcp_server_path = mcp_server_path
         self.room = room
         self.loop = loop
@@ -61,9 +60,6 @@ class WorldAgent:
         self.user_id = user_id
         self.avatar_id = avatar_id
         self.assistant_name = assistant_name
-        
-        # Character appearance tracking
-        self.current_character_appearance = None  # Stores the last image generation prompt
         
         # MCP Client setup
         self.session: Optional[ClientSession] = None
@@ -98,51 +94,28 @@ class WorldAgent:
 
     def _create_world_system_prompt(self) -> str:
         """Create the world agent system prompt that includes character context"""
-        world_prompt = """You are a World Agent that analyzes conversation context and decides when to generate character images.
-
-CHARACTER CONTEXT:
-"""
-        world_prompt += self.character_system_prompt
-        
-        # Add current character appearance if available
-        if self.current_character_appearance:
-            world_prompt += f"""
-
-CURRENT CHARACTER APPEARANCE:
-{self.current_character_appearance}
-
-Note: The character's current appearance is based on the last image generation. Use this information to maintain consistency when deciding if a new image should be generated."""
-        
-        world_prompt += """
-
-TASK:
+        world_prompt = """
+You are a World Agent that analyzes conversation context and decides when to generate character images.
+-- Input explanation:
+The input include recent text messages from character chat, and the last image edit prompt.
+The last image edit prompt would contain a clear description of the most recent image background.
+The recent text messages from character chat would contain the conversation context.
+--Task description:
+Analyze the recent conversation and decide if an image background should be changed.
+**What constitutes an image background change?**
+- Scene & location change
+- Relative position inside the scene changed, causing image background showing different details 
+(moving from bedroom entrance to the bed or closet)
+- You should never, ever repeat the same image background from previous image edit prompts.
+- Each image edit prompt should produce very visually different image details.
+**Decision Guidelines:**
+- Only trigger image generation if there's a clear background change in the conversation
+- Look for mentions of new locations, rooms, positions within a space, or environmental changes
+Return:
 Analyze the recent conversation and decide if the tools should be used.
-
 If no tool is needed, respond normally without using any tools.
-
 Keep your analysis brief and focused."""
         return world_prompt
-
-    def _update_character_appearance(self, prompt: str):
-        """
-        Update the current character appearance with the new prompt and refresh the system prompt.
-        
-        Args:
-            prompt: The image generation prompt that describes the character's appearance
-        """
-        self.current_character_appearance = prompt
-        # Refresh the world system prompt to include the new appearance
-        self.world_system_prompt = self._create_world_system_prompt()
-        logger.info(f"Image editing prompt: {prompt}")
-
-    def get_current_character_appearance(self) -> Optional[str]:
-        """
-        Get the current character appearance description.
-        
-        Returns:
-            The current character appearance prompt, or None if not set
-        """
-        return self.current_character_appearance
 
     async def connect_to_mcp_server(self):
         """Connect to the MCP server"""
@@ -296,12 +269,12 @@ Keep your analysis brief and focused."""
         """Analyze context using direct OpenRouter call"""
         try:
             payload = {
-                "model": "deepseek/deepseek-chat-v3-0324",
+                "model": "google/gemini-2.0-flash",
                 "messages": messages,
                 "stream": False,
                 "max_tokens": 500,
                 "provider": {
-                    'order': ['deepinfra/fp4', 'lambda/fp8', 'baseten/fp8']
+                    'sort' : 'latency'
                 }
             }
 
@@ -384,12 +357,14 @@ Keep your analysis brief and focused."""
         except Exception as e:
             logger.error(f"Error publishing image URL to LiveKit: {e}")
 
-    async def generate_and_send_image(self, prompt: str, image_url: str = None) -> bool:
+    async def generate_and_send_image(self, bg_only_image_prompt: str, 
+                                      completed_image_prompt: str, 
+                                      image_url: str = None) -> bool:
         """
         Generate an image using the provided prompt and send it via LiveKit.
         
         Args:
-            prompt: The image generation prompt
+            bg_only_image_prompt, completed_image_prompt
             
         Returns:
             True if successful, False otherwise
@@ -406,14 +381,14 @@ Keep your analysis brief and focused."""
 
         image_gen_message_id = str(int(time.time() * 1000))
         try:
-            logger.info(f"Generating image with prompt: {prompt}")
+            logger.info(f"Generating image with prompt: {completed_image_prompt}")
             
             # Send IMAGE_START signal to frontend
             await self.publish_frontend_stream_livekit("IMAGE_START", content='', message_id=image_gen_message_id)
             logger.info("Sent IMAGE_START signal to frontend")
             
             input_params = {
-                "prompt": prompt,
+                "prompt": completed_image_prompt,
                 "input_image": image_url,
                 "aspect_ratio": "match_input_image",
                 "output_format": "jpg",
@@ -433,7 +408,7 @@ Keep your analysis brief and focused."""
                 logger.info(f"Image generated successfully: {output_url}")
                 
                 # 1. Immediately upload to S3 to get s3_key
-                s3_key = self.upload_image_to_s3(output_url, prompt)
+                s3_key = self.upload_image_to_s3(output_url)
                 if not s3_key:
                     logger.error("Failed to upload image to S3, aborting")
                     # Send IMAGE_END signal even if S3 upload failed
@@ -442,18 +417,9 @@ Keep your analysis brief and focused."""
                 
                 logger.info(f"Successfully uploaded image to S3: {s3_key}")
                 
-                # # 2. Get public URL from S3 manager
-                # s3_public_url = s3_manager.get_public_url_with_cache_check(s3_key, expires_in=3600)
-                # if not s3_public_url:
-                #     logger.error("Failed to generate public URL for S3 key")
-                #     # Send IMAGE_END signal even if public URL generation failed
-                #     await self.publish_frontend_stream_livekit("IMAGE_END", "")
-                #     return False, "", ""
-                
-                # logger.info(f"Generated public URL for S3 key: {s3_public_url}")
-                
                 # 3. Send the public URL via LiveKit
-                await self.publish_image_url_livekit(s3_key, f"Generated image: {prompt}", message_id=image_gen_message_id)
+                await self.publish_image_url_livekit(s3_key, f"Generated image: {bg_only_image_prompt}", 
+                                                     message_id=image_gen_message_id)
                 logger.info("Sent public image URL to frontend via frontend_stream")   
 
                 send_end_success = False
@@ -469,11 +435,7 @@ Keep your analysis brief and focused."""
                     logger.info("Sent IMAGE_END signal to frontend (no room available)")
                     send_end_success = False
 
-                # 4. Update character appearance with the successful prompt
-                self._update_character_appearance(prompt)
-                return send_end_success, prompt, s3_key, image_gen_message_id
-
-                
+                return send_end_success, s3_key, image_gen_message_id
             else:
                 logger.error("Image generation failed - no output URL received")
                 # Send IMAGE_END signal even if generation failed
@@ -491,39 +453,7 @@ Keep your analysis brief and focused."""
                 logger.error(f"Error sending IMAGE_END signal: {signal_error}")
             return False, "", ""
 
-    async def _send_image_to_livekit(self, image_path: str):
-        """
-        Send a specific image to the LiveKit data channel with topic 'image_file'
-        
-        Args:
-            image_path: Path to the image file to send
-        """
-        if self._is_shutting_down:
-            logger.warning("Skipping image send during shutdown")
-            return
-
-        if not self.room:
-            logger.error("No LiveKit room available for image sending")
-            return
-
-        try:
-            image_name = Path(image_path).name
-            logger.info(f"Sending image: {image_name}")
-            print(f"Sending image: {image_name}")
-
-            # Send the image file using LiveKit's send_file method
-            info = await self.room.local_participant.send_file(
-                file_path=image_path,
-                topic="image_file",
-            )
-
-            logger.info(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
-            print(f"Successfully sent image '{image_name}' with stream ID: {info.stream_id}")
-
-        except Exception as e:
-            logger.error(f"Error sending image to LiveKit: {e}")
-
-    def upload_image_to_s3(self, image_url: str, prompt: str) -> Optional[str]:
+    def upload_image_to_s3(self, image_url: str) -> Optional[str]:
         """
         Download image from replicate URL and upload to S3.
         
@@ -539,7 +469,7 @@ Keep your analysis brief and focused."""
             return None
             
         try:
-            logger.info(f"Starting S3 upload for image: {prompt[:100]}...")
+            logger.info(f"Starting S3 upload for image: {image_url}...")
             
             # Download image from replicate URL
             response = requests.get(image_url, timeout=30)
@@ -604,14 +534,16 @@ Keep your analysis brief and focused."""
         """
         try:
             # Analyze the conversation context
-            image_prompt = await self.analyze_conversation_context(recent_messages)
+            bg_only_image_prompt = await self.analyze_conversation_context(recent_messages)
+            completed_image_prompt = self.complete_image_edit_prompt(bg_only_image_prompt)
             
-            if image_prompt:
-                logger.info(f"World agent decided to generate image: {image_prompt}")
+            if completed_image_prompt:
+                logger.info(f"World agent decided to generate image: {bg_only_image_prompt}")
                 # Generate and send the image
                 input_s3_public_url = s3_manager.get_public_url_with_cache_check(image_url, expires_in=3600)
-                success, image_prompt, s3_key, image_gen_message_id = await self.generate_and_send_image(image_prompt, input_s3_public_url)
-                return success, image_prompt, s3_key, image_gen_message_id
+                success, s3_key, image_gen_message_id = await self.generate_and_send_image(
+                    bg_only_image_prompt, completed_image_prompt, input_s3_public_url)
+                return success, bg_only_image_prompt, s3_key, image_gen_message_id
             else:
                 logger.debug("World agent decided no image generation needed")
                 return False, "", ""
@@ -619,6 +551,21 @@ Keep your analysis brief and focused."""
         except Exception as e:
             logger.error(f"Error processing conversation update: {e}")
             return False, "", ""
+
+    def complete_image_edit_prompt(self, image_prompt) -> str:
+        if not image_prompt:
+            return ""
+            
+        append_at_front = """
+            Change the image background only.
+            """
+        append_at_end = """
+            AT THE END OF YOUR RESPONSE:
+            Camera angle and position is the same, framing is the same, and perspective is the same.
+            Character framing and perspective remain the same. Character clothing should remain the same.
+            Don't not change anything about the character or camera. Only change the image background.
+            """
+        return append_at_front + image_prompt + append_at_end
 
     async def cleanup(self):
         """Cleanup resources"""

@@ -24,7 +24,7 @@ sys.path.append(str(project_root))
 # Import Chat utils
 from generation.generation_util.text_chunk_spliter import TextChunkSpliter
 from generation.generation_util.system_prompt import LLM_System_Prompt
-from generation.generation_util.text_format import replace_special_quotes_to_straight_quotes
+from generation.generation_util.text_format import clean_quotes_asterisks
 
 # Import chat db system
 from data import ChatSessionManager, DatabaseManager
@@ -380,14 +380,12 @@ class ASR_LLM_Manager:
         try:
             logger.info("World agent analysis starting in separate thread...")
             # Get the last 6 messages for context
-            recent_messages = self.get_recent_messages_with_default_image(count=6)
+            image_gen_context = self.get_recent_context_for_image_gen(count=2)
             
-            if recent_messages:
-                logger.info(f"Triggering world agent analysis with {len(recent_messages)} recent messages")
-                
+            if image_gen_context:                
                 # Process the conversation update with world agent
                 image_generated, image_prompt, s3_key, image_gen_message_id = loop.run_until_complete(
-                    self.world_agent.process_conversation_update(recent_messages, 
+                    self.world_agent.process_conversation_update(image_gen_context, 
                                                                  self.get_last_image_url(use_default_image=True))
                 )
                 
@@ -459,7 +457,7 @@ class ASR_LLM_Manager:
 
         payload = {
             "model": self.current_llm_model,
-            "messages": self.messages,
+            "messages": self.get_recent_messages(count=50, include_image_message=False, include_default_image=True),
             "stream": True,
             "provider": {
                 'order': 
@@ -567,7 +565,7 @@ class ASR_LLM_Manager:
                                           f"Cost: {self.current_usage['cost']}")
                             
                             content = data_obj["choices"][0]["delta"].get("content")
-                            content = replace_special_quotes_to_straight_quotes(content)
+                            content = clean_quotes_asterisks(content)
                             if content:
                                 current_response += content
                                 
@@ -661,7 +659,7 @@ class ASR_LLM_Manager:
         """
         try:
             # Get recent messages using the same method as image generation
-            recent_messages = self.get_recent_messages_with_default_image(count=6)
+            recent_messages = self.get_recent_messages(count=8, include_image_message=False, include_default_image=True)
             hint_prompt_msg = {
                 "role": "system",
                 "content": self.hint_prompt
@@ -818,26 +816,8 @@ class ASR_LLM_Manager:
             
         except Exception as e:
             logger.error(f"Failed to load conversation history: {e}")
-    '''
-    def get_recent_messages(self, count: int = 6, exclude_image_bubbles: bool = True) -> List[Dict[str, str]]:
-        """
-        Get the last `count` non-image messages (user/assistant dialogue only).
-        Exclude messages that are image bubbles (i.e., those with an 'imageUrl' field).
-        Exclude system prompt.
-        """
-        def is_dialogue_message(msg):
-            # Exclude if message has an imageUrl (image bubble)
-            if 'imageUrl' in msg and msg['imageUrl']:
-                return False
-            return True
-        if exclude_image_bubbles:
-            filtered = [msg for msg in self.messages if is_dialogue_message(msg)]
-        else:
-            filtered = self.messages
-        return filtered[-count:]
-    '''
-    
-    def get_recent_messages_with_default_image(self, count: int = 6) -> List[Dict[str, str]]:
+
+    def get_recent_messages(self, count: int = 6, include_image_message: bool = True, include_default_image: bool = True) -> List[Dict[str, str]]:
         """
         Get the last `count` non-image messages (user/assistant dialogue only), 
         last image bubble, and default image, excluding system prompt.
@@ -854,9 +834,41 @@ class ASR_LLM_Manager:
                 return False
             return True
         messages_reversed = list(reversed(self.messages[1:])) # exclude system prompt
+        default_image_message = self.messages[2]
         filtered = []
         text_msg_count = 0
-        default_image_message = self.messages[2] # system prompt, opening prompt, default image
+        for msg in messages_reversed:
+            if text_msg_count >= count:
+                break
+            if include_image_message:
+                filtered.append(msg)
+                text_msg_count += 1
+            elif is_dialogue_message(msg):
+                filtered.append(msg)
+                text_msg_count += 1
+        if include_default_image:
+            filtered = [default_image_message] + filtered
+        return list(reversed(filtered))
+    
+    def get_recent_context_for_image_gen(self, count: int = 2) -> List[Dict[str, str]]:
+        """
+        Get the last `count` non-image messages (user/assistant dialogue only), 
+        last image bubble, excluding system prompt.
+
+        Args:
+            count (int, optional): number of messages to return. Defaults to 6.
+
+        Returns:
+            List[Dict[str, str]]: list of messages
+        """
+        def is_dialogue_message(msg):
+            # Exclude if message has an imageUrl (image bubble)
+            if 'imageUrl' in msg and msg['imageUrl']:
+                return False
+            return True
+        messages_reversed = list(reversed(self.messages[1:])) # exclude system prompt
+        filtered = []
+        text_msg_count = 0
         last_image_bubble_msg = None
         for msg in messages_reversed:
             if is_dialogue_message(msg):
@@ -866,11 +878,21 @@ class ASR_LLM_Manager:
             else:
                 if last_image_bubble_msg is None:
                     last_image_bubble_msg = msg
-        if last_image_bubble_msg is not None and \
-            last_image_bubble_msg['imageUrl'] != default_image_message['imageUrl']: # skip if last is the default image
-            filtered = [default_image_message] + filtered # will be last, once reversed
-        filtered.append(last_image_bubble_msg) # will be first, once reversed
-        return list(reversed(filtered))
+        filtered = list(reversed(filtered))
+        # construct context
+        full_context = []
+        for msg in filtered:
+            full_context.append({
+                'role': msg['role'],
+                'content': msg['content']
+            })
+        
+        image_context = {
+            'role': 'image_gen_context',
+            'content': last_image_bubble_msg['content'] if last_image_bubble_msg else 'NO IMAGE FOUND, use text for image generation',
+        }
+        full_context = [image_context] + full_context
+        return full_context
     
     def get_last_image_url(self, use_default_image: bool = True) -> str:
         """

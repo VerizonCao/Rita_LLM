@@ -1,5 +1,5 @@
 
-def replace_special_quotes_to_straight_quotes(input_prompt: str) -> str:
+def clean_quotes_asterisks(input_prompt: str) -> str:
     """Replace special quotes to straight quotes"""
     if not input_prompt:
         return input_prompt
