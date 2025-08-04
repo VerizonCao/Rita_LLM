@@ -1,6 +1,5 @@
-
 def clean_quotes_asterisks(input_prompt: str) -> str:
-    """Replace special quotes to straight quotes"""
+    """Replace special quotes to straight quotes and remove asterisks"""
     if not input_prompt:
         return input_prompt
         
@@ -14,4 +13,8 @@ def clean_quotes_asterisks(input_prompt: str) -> str:
     for special_quote, straight_quote in replacements.items():
         if special_quote in result:
             result = result.replace(special_quote, straight_quote)
+    
+    # Remove all asterisks
+    result = result.replace('*', '')
+    
     return result
