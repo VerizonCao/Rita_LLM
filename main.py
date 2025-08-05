@@ -147,6 +147,12 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                                 logger.error("ASR_LLM_Manager not available for message removal")
                         else:
                             logger.error(f"Invalid remove_message request: missing message_id")
+                
+                elif topic == "room_signal":
+                    # Handle room signal messages
+                    if message_type == "llm_leave":
+                        logger.info("Received llm_leave signal, setting user_left to True")
+                        state.user_left = True
 
             except Exception as e:
                 print(f"Error processing data: {e}")
@@ -296,15 +302,15 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                 print("user left the room")
                 
                 # Send agent-asr-leave signal to the room
-                signal_data = {
-                    "topic": "room_signal",
-                    "type": "agent-asr-leave",
-                    "text": "Agent ASR is leaving the room"
-                }
-                if room is not None and room.local_participant is not None:
-                    await room.local_participant.publish_data(
-                        json.dumps(signal_data)
-                    )
+                # signal_data = {
+                #     "topic": "room_signal",
+                #     "type": "agent-asr-leave",
+                #     "text": "Agent ASR is leaving the room"
+                # }
+                # if room is not None and room.local_participant is not None:
+                #     await room.local_participant.publish_data(
+                #         json.dumps(signal_data)
+                #     )
                 
                 # Send Discord webhook notification for user leaving
                 await send_discord_webhook(room_name, state.current_user_id, state.current_avatar_id, "leaving")
