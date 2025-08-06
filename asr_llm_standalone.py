@@ -122,7 +122,7 @@ class ASR_LLM_Manager:
                 self.world_agent = None
 
         # Initialize messages with system prompt (always first, not stored in DB)
-        self.messages = [
+        self.dialogue_messages = [
             {"role": "system", "content": self.system_prompt},
         ]
         self.current_llm_model = "deepseek/deepseek-chat-v3-0324"
@@ -391,7 +391,7 @@ class ASR_LLM_Manager:
                 
                 if image_generated:
                     logger.info("World agent successfully generated and sent an image")
-                    self.messages.append({"role": "assistant", "content": image_prompt, "imageUrl": s3_key, "message_id": image_gen_message_id})
+                    self.dialogue_messages.append({"role": "assistant", "content": image_prompt, "imageUrl": s3_key, "message_id": image_gen_message_id})
                          
                     # 3. Save to database with s3_key as imageUrl
                     if self.chat_session_manager and self.user_id and self.avatar_id:
@@ -439,8 +439,8 @@ class ASR_LLM_Manager:
         consecutive_narrative_chars = 0 
         consecutive_dialogue_chars = 0  # "Prev dialogue speak time" + "prev Narrative read time" = "New prev-dialogue sleep time"
 
-        # Add user message to self.messages (single source of truth)
-        self.messages.append({"role": "user", "content": text, 'message_id': user_message_id})
+        # Add user message to self.dialogue_messages (single source of truth)
+        self.dialogue_messages.append({"role": "user", "content": text, 'message_id': user_message_id})
         
         assistant_message_id = str(int(time.time() * 1000))
         # Save user message to database
@@ -518,11 +518,11 @@ class ASR_LLM_Manager:
 
                             # Add assistant message (single source of truth)
                             current_response = current_response.strip()
-                            self.messages.append(
+                            self.dialogue_messages.append(
                                 {"role": "assistant", "content": current_response, "message_id": assistant_message_id}
                             )
                             logger.info(f"Current response: {current_response}")
-                            print(f"Debug: Added assistant message to messages list. Total messages: {len(self.messages)}")
+                            print(f"Debug: Added assistant message to messages list. Total messages: {len(self.dialogue_messages)}")
                             
                             # Save LLM response to database
                             try:
@@ -766,7 +766,7 @@ class ASR_LLM_Manager:
             self.user_preferred_name = ''
 
     def _load_conversation_history(self):
-        """Load conversation history from database and populate self.messages"""
+        """Load conversation history from database and populate self.dialogue_messages"""
         try:
             # Read history using simplified interface
             history = self.chat_session_manager.read_history(
@@ -777,7 +777,7 @@ class ASR_LLM_Manager:
             
             # Add history to messages (system prompt is already first)
             if history:
-                self.messages.extend(history)
+                self.dialogue_messages.extend(history)
                 logger.info(f"Loaded {len(history)} messages from conversation history")
             else:
                 # No history exists, try to load opening_prompt from avatars table
@@ -785,12 +785,12 @@ class ASR_LLM_Manager:
                 if opening_prompt:
                     # Add opening prompt as first assistant message, default image as first image message
                     opening_message = {"role": "assistant", "content": opening_prompt, "message_id": ''}
-                    self.messages.append(opening_message)
+                    self.dialogue_messages.append(opening_message)
                     default_image_message = {"role": "assistant", 
                                              "content": "Default Image:\n" + self.avatar_img_caption, 
                                              "imageUrl": self.avatar_image_uri,
                                              "message_id": ''}
-                    self.messages.append(default_image_message)
+                    self.dialogue_messages.append(default_image_message)
                     # Save opening prompt & first image to database as first assistant message
                     try:
                         self.chat_session_manager.write_assistant_message(
@@ -833,8 +833,8 @@ class ASR_LLM_Manager:
             if 'imageUrl' in msg and msg['imageUrl']:
                 return False
             return True
-        messages_reversed = list(reversed(self.messages[1:])) # exclude system prompt
-        default_image_message = self.messages[2]
+        messages_reversed = list(reversed(self.dialogue_messages[1:])) # exclude system prompt
+        default_image_message = self.dialogue_messages[2]
         filtered = []
         text_msg_count = 0
         for msg in messages_reversed:
@@ -866,7 +866,7 @@ class ASR_LLM_Manager:
             if 'imageUrl' in msg and msg['imageUrl']:
                 return False
             return True
-        messages_reversed = list(reversed(self.messages[1:])) # exclude system prompt
+        messages_reversed = list(reversed(self.dialogue_messages[1:])) # exclude system prompt
         filtered = []
         text_msg_count = 0
         last_image_bubble_msg = None
@@ -901,7 +901,7 @@ class ASR_LLM_Manager:
         if use_default_image:
             return self.avatar_image_uri
         found_image_url = False
-        for msg in reversed(self.messages):
+        for msg in reversed(self.dialogue_messages):
             if 'imageUrl' in msg and msg['imageUrl']:
                 print(f"Found Last image URL: {msg['imageUrl']}")
                 return msg['imageUrl']
@@ -998,10 +998,10 @@ class ASR_LLM_Manager:
             
             # Step 2: Remove from local messages list (no matter what database result was)
             local_removed = False
-            for i, msg in enumerate(self.messages):
+            for i, msg in enumerate(self.dialogue_messages):
                 if msg.get('message_id') == message_id:
                     logger.info(f"Found message in local list at index {i}: {msg}")
-                    self.messages.pop(i)
+                    self.dialogue_messages.pop(i)
                     local_removed = True
                     break
             
