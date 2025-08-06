@@ -96,6 +96,10 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
     def on_data_received(data: rtc.DataPacket):
         async def process_data():
             try:
+                # Ignore data if user has left
+                if state.user_left:
+                    return
+                    
                 raw_json = data.data.decode("utf-8")
                 json_data = json.loads(raw_json)
 
