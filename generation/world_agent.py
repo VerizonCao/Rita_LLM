@@ -43,7 +43,6 @@ class WorldAgent:
     
     def __init__(
         self,
-        character_system_prompt: str,
         mcp_server_path: str = "generation/chat_server.py",
         room=None,  # LiveKit room for sending images
         loop: asyncio.AbstractEventLoop = None,

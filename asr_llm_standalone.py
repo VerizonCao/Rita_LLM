@@ -101,14 +101,13 @@ class ASR_LLM_Manager:
             character_prompt=self.character_prompt,
             user_preferred_name=self.user_preferred_name,
         )
-        self.system_prompt = system_prompt_obj.get_system_prompt()
+        self.system_prompts_list = system_prompt_obj.get_system_prompt()
         self.hint_prompt = system_prompt_obj.get_hint_prompt()
 
         # World agent integration (enabled when image_swap is True)
         if self.image_swap:
             try:
                 self.world_agent = WorldAgent(
-                    character_system_prompt=self.system_prompt,
                     mcp_server_path="generation/chat_server.py",  # Fixed MCP server path
                     room=room,
                     loop=loop,
@@ -121,10 +120,8 @@ class ASR_LLM_Manager:
                 logger.error(f"Failed to initialize world agent: {e}")
                 self.world_agent = None
 
-        # Initialize messages with system prompt (always first, not stored in DB)
-        self.dialogue_messages = [
-            {"role": "system", "content": self.system_prompt},
-        ]
+        # Initialize empty dialogue messages list
+        self.dialogue_messages = []
         self.current_llm_model = "deepseek/deepseek-chat-v3-0324"
         self.current_image_gen_model = "black-forest-labs/flux-kontext-dev"
 
@@ -457,7 +454,7 @@ class ASR_LLM_Manager:
 
         payload = {
             "model": self.current_llm_model,
-            "messages": self.get_recent_messages(count=50, include_image_message=False, include_default_image=True),
+            "messages": self.get_llm_input_list(),
             "stream": True,
             "provider": {
                 'order': 
@@ -817,6 +814,11 @@ class ASR_LLM_Manager:
         except Exception as e:
             logger.error(f"Failed to load conversation history: {e}")
 
+    def get_llm_input_list(self):
+        recent_dialogue_messages = self.get_recent_messages(count=50, include_image_message=False, include_default_image=True)
+        llm_input_list = self.system_prompts_list + recent_dialogue_messages
+        return llm_input_list
+
     def get_recent_messages(self, count: int = 6, include_image_message: bool = True, include_default_image: bool = True) -> List[Dict[str, str]]:
         """
         Get the last `count` non-image messages (user/assistant dialogue only), 
@@ -833,8 +835,8 @@ class ASR_LLM_Manager:
             if 'imageUrl' in msg and msg['imageUrl']:
                 return False
             return True
-        messages_reversed = list(reversed(self.dialogue_messages[1:])) # exclude system prompt
-        default_image_message = self.dialogue_messages[2]
+        messages_reversed = list(reversed(self.dialogue_messages))
+        default_image_message = self.dialogue_messages[1] # first is greeting, second is default image
         filtered = []
         text_msg_count = 0
         for msg in messages_reversed:
@@ -866,7 +868,7 @@ class ASR_LLM_Manager:
             if 'imageUrl' in msg and msg['imageUrl']:
                 return False
             return True
-        messages_reversed = list(reversed(self.dialogue_messages[1:])) # exclude system prompt
+        messages_reversed = list(reversed(self.dialogue_messages))
         filtered = []
         text_msg_count = 0
         last_image_bubble_msg = None
