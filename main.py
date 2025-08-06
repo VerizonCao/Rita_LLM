@@ -95,11 +95,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
     @room.on("data_received")
     def on_data_received(data: rtc.DataPacket):
         async def process_data():
-            try:
-                # Ignore data if user has left
-                if state.user_left:
-                    return
-                    
+            try:                    
                 raw_json = data.data.decode("utf-8")
                 json_data = json.loads(raw_json)
 
@@ -156,6 +152,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                     # Handle room signal messages
                     if message_type == "llm_leave":
                         logger.info("Received llm_leave signal, setting user_left to True")
+                        print("received llm_leave signal, setting user_left to True")
                         state.user_left = True
 
             except Exception as e:
