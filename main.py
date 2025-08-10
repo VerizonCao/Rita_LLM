@@ -92,6 +92,16 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
             if not state.serve_start_time:
                 state.serve_start_time = time.time()
 
+            # Send agent-asr-enter signal to the room. in case the rita llm is faster than the user. 
+            signal_data = {
+                "topic": "room_signal",
+                "type": "agent-asr-enter",
+                "text": "Agent ASR has entered the room"
+            }
+            room.local_participant.publish_data(
+                json.dumps(signal_data)
+            )
+
     @room.on("data_received")
     def on_data_received(data: rtc.DataPacket):
         async def process_data():
