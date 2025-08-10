@@ -101,7 +101,8 @@ class ASR_LLM_Manager:
             character_prompt=self.character_prompt,
             user_preferred_name=self.user_preferred_name,
         )
-        self.system_prompts_list = system_prompt_obj.get_system_prompt()
+        self.system_prompts_list = system_prompt_obj.system_prompt_list
+        self.pinned_prompt_limit = [system_prompt_obj.pinned_prompt_limit]
         self.hint_prompt = system_prompt_obj.get_hint_prompt()
 
         # World agent integration (enabled when image_swap is True)
@@ -459,9 +460,8 @@ class ASR_LLM_Manager:
             "provider": {
                 'order': 
                 [
-                    'lambda/fp8',
-                    'deepinfra/fp4',
-                    'baseten/fp8',
+                    'chutes/fp8',
+                    'targon/fp8',
                 ]
                 # 'sort': 'latency',
                 },
@@ -656,7 +656,7 @@ class ASR_LLM_Manager:
         """
         try:
             # Get recent messages using the same method as image generation
-            recent_messages = self.get_recent_messages(count=8, include_image_message=False, include_default_image=True)
+            recent_messages = self.get_recent_messages(count=6, include_image_message=False, include_default_image=False)
             hint_prompt_msg = {
                 "role": "system",
                 "content": self.hint_prompt
@@ -669,11 +669,7 @@ class ASR_LLM_Manager:
                 "messages": hint_context_messsages,
                 "stream": False,  # Don't stream, wait for full response
                 "provider": {
-                    'order': 
-                    [
-                        'lambda/fp8',
-                        'baseten/fp8',
-                    ]
+                    'sort': 'price',
                 },
                 "usage": {
                     "include": True
@@ -694,12 +690,12 @@ class ASR_LLM_Manager:
             hint_content = response_data["choices"][0]["message"]["content"]
             
             # Update token usage
-            if "usage" in response_data:
-                usage = response_data["usage"]
-                self.current_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
-                self.current_usage["completion_tokens"] += usage.get("completion_tokens", 0)
-                self.current_usage["total_tokens"] += usage.get("total_tokens", 0)
-                self.current_usage["cost"] += usage.get("cost", 0)
+            # if "usage" in response_data:
+            #     usage = response_data["usage"]
+            #     self.current_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+            #     self.current_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+            #     self.current_usage["total_tokens"] += usage.get("total_tokens", 0)
+            #     self.current_usage["cost"] += usage.get("cost", 0)
             
             logger.info(f"Generated hints: {hint_content}...")
             
@@ -816,7 +812,7 @@ class ASR_LLM_Manager:
 
     def get_llm_input_list(self):
         recent_dialogue_messages = self.get_recent_messages(count=50, include_image_message=False, include_default_image=True)
-        llm_input_list = self.system_prompts_list + recent_dialogue_messages
+        llm_input_list = self.system_prompts_list + recent_dialogue_messages + self.pinned_prompt_limit
         return llm_input_list
 
     def get_recent_messages(self, count: int = 6, include_image_message: bool = True, include_default_image: bool = True) -> List[Dict[str, str]]:

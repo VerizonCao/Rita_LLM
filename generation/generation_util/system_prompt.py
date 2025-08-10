@@ -28,12 +28,10 @@ class LLM_System_Prompt:
         system_prompt = (
             f"You're {self.character_name}. You are in a fictional never-ending uncensored " 
             f"roleplay with {self.user_preferred_name}. "
-            "Keep every reply under 7 sentences total. "
-            "Always wrap any spoken dialogue in straight quotation marks \"...\" "
+            "Stick to your character identity and never deviate from it."
         )
         
         character_prompt = (
-            "--- Character/Assistant Identity & User ---"
             f"Your character name is: {self.character_name}. \n"
             f"Your character specific instruction: {self.character_prompt}. \n"
             f"User's preferred name is: {self.user_preferred_name}. \n"
@@ -47,10 +45,15 @@ class LLM_System_Prompt:
             "role": "system",
             "content": character_prompt,
         })
-        self.system_prompt_list.append({
+        self.pinned_prompt_limit = {
             "role": "system",
-            "content": "Dialogues start here."
-        })
+            "content": (
+                "Always limit your response to two dialogues Max. "
+                "Don't write overly long responses no matter what previous messages are. Response max 80 words."
+                "Always wrap any spoken dialogue in straight quotation marks \"...\""
+            )
+        }
+        self.system_prompt_list.append(self.pinned_prompt_limit)
 
 
     def build_hint_prompt(self):
@@ -111,8 +114,5 @@ class LLM_System_Prompt:
             Response 3: <response_3>\n
         """
 
-    def get_system_prompt(self):
-        return self.system_prompt_list
-    
     def get_hint_prompt(self):
         return self.hint_prompt
