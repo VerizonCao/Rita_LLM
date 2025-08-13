@@ -409,6 +409,19 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                 else:
                     user_left_loop_count = 0
 
+            # Check if agent-avatar is still in the room every 2 second (20 loops)
+            if loop_count % 20 == 0:
+                agent_avatar_found = False
+                if room.remote_participants:
+                    for participant in room.remote_participants.values():
+                        if participant.attributes and participant.attributes.get("role") == "agent-avatar":
+                            agent_avatar_found = True
+                            break
+                
+                if not agent_avatar_found:
+                    print("Agent-avatar not found in room, setting user_left to True")
+                    state.user_left = True
+
             # Handle complete assistant messages (for backward compatibility)
             if (
                 state.audio_capture_wrapper
