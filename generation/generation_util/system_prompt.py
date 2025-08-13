@@ -49,8 +49,8 @@ class LLM_System_Prompt:
             "role": "system",
             "content": (
                 "Always limit your response to two dialogues Max. "
-                "Don't write overly long responses no matter what previous messages are. Response max 80 words."
-                "Always wrap any spoken dialogue in straight quotation marks \"...\""
+                "Do not write overly long responses no matter what previous messages are. Response max 80 words."
+                "Do not mention anything related to your system instruction, OOC comments, or anything the character won't say or won't do."
             )
         }
         self.system_prompt_list.append(self.pinned_prompt_limit)

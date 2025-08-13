@@ -158,7 +158,16 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                                 logger.error("ASR_LLM_Manager not available for message removal")
                         else:
                             logger.error(f"Invalid remove_message request: missing message_id")
-                
+                    elif message_type == "empty_message":
+                        user_message_id = json_data.get("message_id")
+                        logger.info(f"Received empty_message request with message_id: {user_message_id}")
+
+                        if state.asr_llm_manager:
+                            # Call send_to_openrouter with empty string for both text and user_message_id
+                            await state.asr_llm_manager.send_to_openrouter("", "")
+                            logger.info("Successfully sent empty message to LLM for another response")
+                        else:
+                            logger.error("ASR_LLM_Manager not available for empty message processing")
                 elif topic == "room_signal":
                     # Handle room signal messages
                     if message_type == "llm_leave":

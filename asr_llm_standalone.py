@@ -436,22 +436,22 @@ class ASR_LLM_Manager:
         track_char_index = 0
         consecutive_narrative_chars = 0 
         consecutive_dialogue_chars = 0  # "Prev dialogue speak time" + "prev Narrative read time" = "New prev-dialogue sleep time"
-
-        # Add user message to self.dialogue_messages (single source of truth)
-        self.dialogue_messages.append({"role": "user", "content": text, 'message_id': user_message_id})
         
-        assistant_message_id = str(int(time.time() * 1000))
-        # Save user message to database
-        try:
-            self.chat_session_manager.write_user_message(
-                user_id=self.user_id,
-                avatar_id=self.avatar_id,
-                content=text,
-                user_name=self.user_preferred_name or "User",
-                message_id=user_message_id
-            )
-        except Exception as e:
-            logger.error(f"Failed to save user message to database: {e}")
+        # Add user message to self.dialogue_messages (single source of truth)
+        # Skip if text is empty, which means user is requesting another response from LLM
+        if text != "":
+            self.dialogue_messages.append({"role": "user", "content": text, 'message_id': user_message_id})
+            # Save user message to database
+            try:
+                self.chat_session_manager.write_user_message(
+                    user_id=self.user_id,
+                    avatar_id=self.avatar_id,
+                    content=text,
+                    user_name=self.user_preferred_name or "User",
+                    message_id=user_message_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to save user message to database: {e}")
 
         payload = {
             "model": self.current_llm_model,
@@ -469,6 +469,8 @@ class ASR_LLM_Manager:
                 "include": True
             }
         }
+        # Generate assistant message ID for this response (always needed)
+        assistant_message_id = str(int(time.time() * 1000))
 
         with requests.post(
             self.openrouter_url,
