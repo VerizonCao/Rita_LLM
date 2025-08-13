@@ -62,6 +62,7 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
             self.current_user_id = None  # Track current user ID
             self.current_avatar_id = None  # Track current avatar ID
             self.image_swap = False  # Track image swap setting
+            self.agent_avatar_seen = False  # Track if agent-avatar has been seen at least once
 
     state = RoomState()
     state.current_user_id = user_id
@@ -409,17 +410,22 @@ async def main_room(room: rtc.Room, room_name: str, avatar_id: str = None, user_
                 else:
                     user_left_loop_count = 0
 
-            # Check if agent-avatar is still in the room every 2 second (20 loops)
+            # Check for agent-avatar presence/absence every 2 seconds (20 loops)
             if loop_count % 20 == 0:
                 agent_avatar_found = False
                 if room.remote_participants:
                     for participant in room.remote_participants.values():
                         if participant.attributes and participant.attributes.get("role") == "agent-avatar":
                             agent_avatar_found = True
+                            # Mark as seen if this is the first time we detect an agent-avatar
+                            if not state.agent_avatar_seen:
+                                state.agent_avatar_seen = True
+                                print("Agent-avatar detected for the first time, marking as seen")
                             break
                 
-                if not agent_avatar_found:
-                    print("Agent-avatar not found in room, setting user_left to True")
+                # If we've seen an agent-avatar before but can't find it now, exit
+                if state.agent_avatar_seen and not agent_avatar_found:
+                    print("Agent-avatar not found in room (was previously seen), setting user_left to True")
                     state.user_left = True
 
             # Handle complete assistant messages (for backward compatibility)
